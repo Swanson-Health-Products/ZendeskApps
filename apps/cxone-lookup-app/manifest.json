@@ -1,0 +1,59 @@
+{
+  "name": "CXone Caller Lookup",
+  "author": {
+    "name": "Kevin Wolf",
+    "email": "kevin.wolf@swansonhealth.com",
+    "url": "https://swansonvitamins.com"
+  },
+  "icon": "assets/icon.png",
+  "version": "0.1.1",
+  "frameworkVersion": "2.0",
+  "defaultLocale": "en",
+  "private": true,
+  "location": {
+    "support": {
+      "ticket_sidebar": {
+        "url": "assets/iframe.html",
+        "flexible": true
+      },
+      "new_ticket_sidebar": {
+        "url": "assets/iframe.html",
+        "flexible": true
+      },
+      "background": {
+        "url": "assets/background.html"
+      }
+    }
+  },
+  "parameters": [
+    {
+      "name": "cxoneAllowedOrigin",
+      "type": "text",
+      "required": false,
+      "default": "https://cxagent.nicecxone.com",
+      "secure": false,
+      "description": "Origin allowed for postMessage events that carry the current call number."
+    },
+    {
+      "name": "bridgeUrl",
+      "type": "text",
+      "required": false,
+      "secure": false,
+      "description": "Optional endpoint that returns JSON with { phone: \"15551234567\" } for polling every 5s."
+    },
+    {
+      "name": "bridgeApiKey",
+      "type": "text",
+      "required": false,
+      "secure": true,
+      "description": "Optional API key sent as X-API-Key when calling the bridge."
+    },
+    {
+      "name": "bridgeApiKeyPublic",
+      "type": "text",
+      "required": false,
+      "secure": false,
+      "description": "Public API key (fallback) used in the browser when secure settings are not exposed."
+    }
+  ]
+}

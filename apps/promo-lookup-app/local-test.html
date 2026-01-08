@@ -1,0 +1,172 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Source Offer Lookup (Local)</title>
+  <link rel="stylesheet" href="https://assets.zendesk.com/apps/sdk-assets/css/2/zendesk_garden.css">
+  <style>
+    body { padding: 12px; font-family: "Segoe UI", sans-serif; background: #fff; }
+    h1 { font-size: 16px; margin: 0 0 12px; }
+    .field { margin-bottom: 10px; }
+    .result { background: #f6f6f6; padding: 10px; border-radius: 6px; font-family: Consolas, monospace; white-space: pre-wrap; word-break: break-word; }
+    .status { min-height: 20px; color: #b30000; }
+    .row { display: flex; gap: 6px; }
+    .row button { flex: 1; }
+  </style>
+</head>
+<body>
+  <h1>Source Offer Lookup (Local)</h1>
+  <div class="field">
+    <label for="source">Source code</label>
+    <input id="source" class="zd-input" type="text" placeholder="e.g., CEO40SW" autocomplete="off" />
+  </div>
+  <div class="row">
+    <button id="lookup" class="zd-btn">Lookup</button>
+    <button id="clear" class="zd-btn">Clear</button>
+  </div>
+  <div id="status" class="status" aria-live="polite"></div>
+  <div id="result" class="result" hidden></div>
+
+  <script>
+    const SOURCE_CODE_MAP_URL = "https://shopify-app-react-cf-dev.swansonvitamins.workers.dev/api/source-code-map";
+    const SOURCE_PROMO_MAP_URL = "https://shopify-app-react-cf-dev.swansonvitamins.workers.dev/api/source-promo-map";
+
+    const sourceEl = document.getElementById("source");
+    const statusEl = document.getElementById("status");
+    const resultEl = document.getElementById("result");
+    const lookupBtn = document.getElementById("lookup");
+    const clearBtn = document.getElementById("clear");
+    let lastLog = [];
+
+    lookupBtn.addEventListener("click", lookup);
+    clearBtn.addEventListener("click", resetForm);
+    sourceEl.addEventListener("keypress", (e) => {
+      if (e.key === "Enter") {
+        lookup();
+      }
+    });
+
+    function setStatus(message, isError = true) {
+      statusEl.textContent = message || "";
+      statusEl.style.color = isError ? "#b30000" : "#024d1f";
+    }
+
+    function showResult(payload) {
+      resultEl.hidden = false;
+      resultEl.textContent = JSON.stringify(payload, null, 2);
+    }
+
+    function resetForm() {
+      sourceEl.value = "";
+      setStatus("");
+      resultEl.hidden = true;
+      resultEl.textContent = "";
+      lastLog = [];
+      sourceEl.focus();
+    }
+
+    const USE_CORS_PROXY = true;
+    const proxyUrl = (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`;
+
+    async function fetchWithLog(url) {
+      const entry = { url, started_at: new Date().toISOString(), transport: USE_CORS_PROXY ? "fetch+corsproxy" : "fetch" };
+      const target = USE_CORS_PROXY ? proxyUrl(url) : url;
+      try {
+        const response = await fetch(target, { headers: { Accept: "application/json" } });
+        const text = await response.text();
+        let parsed;
+        try {
+          parsed = JSON.parse(text);
+        } catch (_) {
+          parsed = undefined;
+        }
+        entry.status = response.status;
+        entry.statusText = response.statusText;
+        entry.ok = response.ok;
+        entry.headers = Object.fromEntries(response.headers.entries());
+        entry.body = text.slice(0, 4000);
+        entry.proxied = USE_CORS_PROXY;
+        entry.target = target;
+
+        lastLog.push(entry);
+
+        if (!response.ok) {
+          const err = new Error(`Fetch failed (${response.status} ${response.statusText || ""})`.trim());
+          err.status = response.status;
+          err.statusText = response.statusText;
+          err.body = text;
+          err.url = url;
+          throw err;
+        }
+        return parsed !== undefined ? parsed : text;
+      } catch (err) {
+        entry.error = err.message || String(err);
+        entry.errorName = err.name;
+        entry.errorStack = err.stack ? err.stack.split("\n")[0] : null;
+        entry.errorType = err.constructor ? err.constructor.name : null;
+        lastLog.push(entry);
+        throw err;
+      }
+    }
+
+    async function lookup() {
+      const raw = sourceEl.value.trim().toUpperCase();
+      if (!raw) {
+        setStatus("Enter a source code.");
+        return;
+      }
+
+      setStatus("Loading...", false);
+      lookupBtn.disabled = true;
+      clearBtn.disabled = true;
+
+      try {
+        lastLog = [];
+        const [sourceToPromo, promoRaw] = await Promise.all([
+          fetchWithLog(SOURCE_CODE_MAP_URL),
+          fetchWithLog(SOURCE_PROMO_MAP_URL)
+        ]);
+
+        const promoMap = promoRaw && promoRaw.promo_to_offer ? promoRaw.promo_to_offer : promoRaw;
+        if (!promoMap || typeof promoMap !== "object") {
+          throw new Error("Unexpected promo map shape");
+        }
+
+        const promoCode = sourceToPromo[raw];
+        if (!promoCode) {
+          setStatus("Source code not found.");
+          showResult({
+            source_code: raw,
+            promo_code: null,
+            offer_code: null,
+            log: lastLog
+          });
+          return;
+        }
+
+        const offerCode = promoMap[promoCode] || null;
+        setStatus("Lookup complete.", false);
+        showResult({
+          source_code: raw,
+          promo_code: promoCode,
+          offer_code: offerCode,
+          log: lastLog
+        });
+      } catch (err) {
+        setStatus(`Error: ${err.message || err}`);
+        showResult({
+          error: err.message || String(err),
+          status: err.status ?? null,
+          statusText: err.statusText ?? null,
+          body: err.body ?? null,
+          url: err.url ?? null,
+          log: lastLog
+        });
+      } finally {
+        lookupBtn.disabled = false;
+        clearBtn.disabled = false;
+      }
+    }
+  </script>
+</body>
+</html>

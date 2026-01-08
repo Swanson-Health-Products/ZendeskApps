@@ -1,0 +1,269 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>CXone Caller Lookup</title>
+  <style>
+    :root {
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      color: #0f172a;
+      background: #f8fafc;
+    }
+    body {
+      margin: 0;
+      padding: 12px;
+      background: #f8fafc;
+    }
+    .card {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 12px;
+      box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
+    }
+    h2 {
+      margin: 0 0 6px;
+      font-size: 18px;
+      font-weight: 700;
+      color: #0f172a;
+    }
+    p {
+      margin: 4px 0;
+      color: #334155;
+    }
+    .status {
+      font-size: 13px;
+      margin: 6px 0 10px;
+      padding: 8px;
+      border-radius: 8px;
+      background: #f1f5f9;
+      border: 1px solid #e2e8f0;
+    }
+    .result {
+      margin-top: 8px;
+      padding: 10px;
+      border-radius: 10px;
+      border: 1px solid #e2e8f0;
+      background: #f8fafc;
+    }
+    .muted {
+      color: #94a3b8;
+      font-size: 12px;
+    }
+    .error {
+      color: #b91c1c;
+      font-weight: 700;
+    }
+    a {
+      color: #2563eb;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>CXone Caller Lookup</h2>
+    <p class="muted">Pulls the latest CXone call number via the bridge URL and looks up the Zendesk requester.</p>
+    <div id="status" class="status">Initializing...</div>
+    <div id="result" class="result">
+      <div class="muted">Waiting for a number...</div>
+    </div>
+  </div>
+
+  <script src="https://static.zdassets.com/zendesk_app_framework_sdk/2.0/zaf_sdk.min.js"></script>
+  <script>
+    (function() {
+      const client = ZAFClient.init();
+      client.invoke('resize', { width: '100%', height: '240px' });
+      let settings = {};
+      let accountSubdomain = null;
+      let currentUserEmail = null;
+      let latestDigits = null;
+      let bridgeTimer = null;
+
+      const statusEl = document.getElementById('status');
+      const resultEl = document.getElementById('result');
+
+      setStatus('Loading settings...');
+
+      Promise.all([client.metadata(), client.context(), client.get('currentUser')])
+        .then(([meta, ctx, currentUserData]) => {
+          settings = meta && meta.settings ? meta.settings : {};
+          accountSubdomain = ctx && ctx.account ? ctx.account.subdomain : null;
+          // client.get('currentUser') returns { currentUser: {...} }
+          const cu = currentUserData && (currentUserData.currentUser || currentUserData);
+          currentUserEmail = cu && cu.email ? cu.email : null;
+          setStatus('Waiting for call number...');
+          startBridgePolling();
+        })
+        .catch((err) => {
+          console.error('Init error', err);
+          setStatus('Init failed; check console', true);
+        });
+
+      function startBridgePolling() {
+        const urlBase = (settings.bridgeUrl || '').trim();
+        if (!urlBase) return;
+        const apiKey = settings.bridgeApiKeyPublic || settings.bridgeApiKey;
+        const url = appendUsername(urlBase, currentUserEmail, apiKey);
+        const poll = async () => {
+          try {
+            const empty = await isRequesterEmpty();
+            if (!empty) {
+              setStatus('Requester already set; skipping poll.');
+            } else {
+              const headers = apiKey ? { 'X-API-Key': apiKey } : undefined;
+              const res = await client.request({ url, type: 'GET', dataType: 'json', cache: false, headers });
+              if (res && res.phone) {
+                handleNumber(res.phone, 'bridgeUrl');
+              }
+            }
+          } catch (err) {
+            // swallow errors; keep polling
+          } finally {
+            bridgeTimer = setTimeout(poll, 5000);
+          }
+        };
+        setStatus('Polling bridge URL for call number...');
+        poll();
+      }
+
+      async function isRequesterEmpty() {
+        try {
+          const current = await client.get('ticket.requester');
+          const existing = current && current['ticket.requester'];
+          return !(existing && (existing.id || existing.email));
+        } catch (e) {
+          return true;
+        }
+      }
+
+      function appendUsername(url, email, apiKey) {
+        if (!email) return url;
+        let out = url.includes('?') ? `${url}&username=${encodeURIComponent(email)}` : `${url}?username=${encodeURIComponent(email)}`;
+        if (apiKey) {
+          out += `&api_key=${encodeURIComponent(apiKey)}`;
+        }
+        return out;
+      }
+
+      function handleNumber(raw, source) {
+        const digits = (raw || '').replace(/\D+/g, '');
+        if (!digits) {
+          setStatus('No digits found in incoming value.', true);
+          return;
+        }
+        latestDigits = digits;
+        lookupAndRender(digits, source);
+      }
+
+      async function lookupAndRender(digits, source) {
+        setStatus('Looking up requester for ' + digits + (source ? ' (' + source + ')' : '') + '...');
+        try {
+          const users = await searchUsersByPhone(digits);
+          renderResult(users, digits);
+          if (users.length) {
+            await setRequester(users[0]);
+            setStatus('Match found for ' + digits + '.');
+          } else {
+            setStatus('No requester match yet for ' + digits + '.', true);
+          }
+        } catch (err) {
+          console.error('Lookup error', err);
+          setStatus('Lookup failed: ' + (err.message || err.toString()), true);
+        }
+      }
+
+      async function searchUsersByPhone(digits) {
+        const queries = [];
+        queries.push('phone:' + digits);
+        if (digits.length === 10) queries.push('phone:+1' + digits);
+        if (digits[0] !== '+') queries.push('phone:+' + digits);
+
+        const seen = new Set();
+        for (const q of queries) {
+          const resp = await client.request({
+            url: '/api/v2/users/search.json?query=' + encodeURIComponent(q),
+            type: 'GET'
+          });
+          const users = resp && Array.isArray(resp.users) ? resp.users : [];
+          const unique = users.filter((u) => {
+            if (seen.has(u.id)) return false;
+            seen.add(u.id);
+            return true;
+          });
+          if (unique.length) return unique;
+        }
+        return [];
+      }
+
+      function renderResult(users, digits) {
+        if (!users.length) {
+          resultEl.innerHTML = `
+            <div class="muted">No requester found for <strong>${digits}</strong>.</div>
+          `;
+          return;
+        }
+        const u = users[0];
+        const phone = u.phone || u.mobile || '';
+        const email = u.email || '';
+        const link = accountSubdomain
+          ? `https://${accountSubdomain}.zendesk.com/agent/users/${u.id}`
+          : null;
+
+        resultEl.innerHTML = `
+          <div><strong>${escapeHtml(u.name || 'Unknown')}</strong> (ID ${u.id})</div>
+          ${email ? `<div>Email: ${escapeHtml(email)}</div>` : ''}
+          ${phone ? `<div>Phone: ${escapeHtml(phone)}</div>` : ''}
+          <div class="muted">Role: ${escapeHtml(u.role || 'n/a')}  Status: ${escapeHtml(u.suspended ? 'Suspended' : 'Active')}</div>
+          ${link ? `<div style="margin-top:6px;"><a href="${link}" target="_blank" rel="noopener">Open requester profile</a></div>` : ''}
+        `;
+      }
+
+      function setStatus(msg, isError) {
+        statusEl.textContent = msg;
+        statusEl.classList.toggle('error', !!isError);
+      }
+
+      async function setRequester(user) {
+        try {
+          const current = await client.get('ticket.requester');
+          const existing = current && current['ticket.requester'];
+          const hasRequester = existing && (existing.id || existing.email);
+          if (hasRequester) {
+            setStatus('Requester already selected; not changing.', true);
+            return;
+          }
+          // Re-check just before setting to avoid races on new/unsaved tickets.
+          const current2 = await client.get('ticket.requester');
+          const existing2 = current2 && current2['ticket.requester'];
+          const hasRequester2 = existing2 && (existing2.id || existing2.email);
+          if (hasRequester2) {
+            setStatus('Requester was selected while processing; not changing.', true);
+            return;
+          }
+          await client.set('ticket.requester', { id: user.id });
+        } catch (err) {
+          console.warn('Failed to set requester', err);
+        }
+      }
+
+      function escapeHtml(str) {
+        return (str || '').replace(/[&<>"']/g, (ch) => ({
+          '&': '&amp;',
+          '<': '&lt;',
+          '>': '&gt;',
+          '"': '&quot;',
+          "'": '&#39;'
+        }[ch]));
+      }
+    })();
+  </script>
+</body>
+</html>
+
+

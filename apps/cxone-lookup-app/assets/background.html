@@ -1,0 +1,196 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>CXone Caller Lookup (background)</title>
+</head>
+<body>
+  <script src="https://static.zdassets.com/zendesk_app_framework_sdk/2.0/zaf_sdk.min.js"></script>
+  <script>
+    (function() {
+      const client = ZAFClient.init();
+      const LOG = true;
+      let settings = {};
+      let currentUserEmail = null;
+      let lastDigits = null;
+      let bridgeTimer = null;
+
+      init();
+
+      function init() {
+        Promise.all([client.metadata(), client.get('currentUser')])
+          .then(([meta, currentUserData]) => {
+            settings = meta && meta.settings ? meta.settings : {};
+            const cu = currentUserData && (currentUserData.currentUser || currentUserData);
+            currentUserEmail = cu && cu.email ? cu.email : null;
+            log('BG init ok. email=', currentUserEmail, 'bridgeUrl=', settings.bridgeUrl);
+            startBridgePolling();
+          })
+          .catch((err) => log('BG init error', err));
+      }
+
+      function startBridgePolling() {
+        const urlBase = (settings.bridgeUrl || '').trim();
+        if (!urlBase) return;
+        const apiKey = settings.bridgeApiKeyPublic || settings.bridgeApiKey;
+        const url = appendUsername(urlBase, currentUserEmail, apiKey);
+        const poll = async () => {
+          try {
+            const needs = await needsRequester();
+            if (!needs) {
+              log('BG requester already set in all open tickets; skipping poll');
+            } else {
+              const headers = apiKey ? { 'X-API-Key': apiKey } : undefined;
+              const res = await client.request({ url, type: 'GET', dataType: 'json', cache: false, headers });
+              if (res && res.phone) handleNumber(res.phone, 'bridgeUrl');
+            }
+          } catch (err) {
+            // keep polling even on errors
+            log('BG poll error', err && err.message ? err.message : err);
+          } finally {
+            bridgeTimer = setTimeout(poll, 5000);
+          }
+        };
+        log('BG polling started', url);
+        poll();
+      }
+
+      function appendUsername(url, email, apiKey) {
+        if (!email) return url;
+        let out = url.includes('?') ? `${url}&username=${encodeURIComponent(email)}` : `${url}?username=${encodeURIComponent(email)}`;
+        if (apiKey) {
+          out += `&api_key=${encodeURIComponent(apiKey)}`;
+        }
+        return out;
+      }
+
+      async function needsRequester() {
+        try {
+          const instResp = await client.get('instances');
+          const instances = instResp && instResp.instances ? instResp.instances : {};
+          const entries = Object.keys(instances).map((key) => ({ key, meta: instances[key] || {} }));
+          const ticketInst = entries.filter(({ meta }) => {
+            const loc = (meta.location || '').toLowerCase();
+            return loc.includes('ticket_sidebar') || loc.includes('new_ticket_sidebar');
+          });
+          if (!ticketInst.length) return false;
+          for (const { key } of ticketInst) {
+            try {
+              const ic = client.instance(key);
+              const curr = await ic.get('ticket.requester');
+              const existing = curr && curr['ticket.requester'];
+              const hasRequester = existing && (existing.id || existing.email);
+              if (!hasRequester) return true;
+            } catch (e) {
+              // if any instance fails to get, assume we need to try
+              return true;
+            }
+          }
+          return false;
+        } catch (e) {
+          return true;
+        }
+      }
+
+      function handleNumber(raw, source) {
+        const digits = (raw || '').replace(/\D+/g, '');
+        if (!digits || digits === lastDigits) return;
+        lastDigits = digits;
+        lookupAndSet(digits, source);
+      }
+
+      async function lookupAndSet(digits, source) {
+        try {
+          log('BG lookup start', digits, source);
+          const users = await searchUsersByPhone(digits);
+          if (!users.length) {
+            log('BG lookup no users', digits);
+            return;
+          }
+          log('BG lookup got user', users[0].id, users[0].email);
+          await setRequesterOnTickets(users[0]);
+        } catch (err) {
+          log('BG lookup/set error', err);
+        }
+      }
+
+      async function searchUsersByPhone(digits) {
+        const queries = [];
+        queries.push('phone:' + digits);
+        if (digits.length === 10) queries.push('phone:+1' + digits);
+        if (digits[0] !== '+') queries.push('phone:+' + digits);
+
+        const seen = new Set();
+        for (const q of queries) {
+          const resp = await client.request({
+            url: '/api/v2/users/search.json?query=' + encodeURIComponent(q),
+            type: 'GET'
+          });
+          const users = resp && Array.isArray(resp.users) ? resp.users : [];
+          const unique = users.filter((u) => {
+            if (seen.has(u.id)) return false;
+            seen.add(u.id);
+            return true;
+          });
+          if (unique.length) return unique;
+        }
+        return [];
+      }
+
+      async function setRequesterOnTickets(user) {
+        try {
+          const instResp = await client.get('instances');
+          const instances = instResp && instResp.instances ? instResp.instances : {};
+          const entries = Object.keys(instances).map((key) => ({ key, meta: instances[key] || {} }));
+          const ticketInst = entries.filter(({ meta }) => {
+            const loc = (meta.location || '').toLowerCase();
+            return loc.includes('ticket_sidebar') || loc.includes('new_ticket_sidebar');
+          });
+          if (!ticketInst.length) {
+            log('BG no ticket instances open; skipping requester set');
+            return;
+          }
+          await Promise.all(
+            ticketInst.map(({ key }) => {
+              const ic = client.instance(key);
+              return ic
+                .get('ticket.requester')
+                .then((curr) => {
+                  const existing = curr && curr['ticket.requester'];
+                  const hasRequester = existing && (existing.id || existing.email);
+                  if (hasRequester) {
+                    log('BG requester already set; skip instance', key);
+                    return null;
+                  }
+                  // Re-check immediately before setting to avoid races on new/unsaved tickets.
+                  return ic.get('ticket.requester').then((curr2) => {
+                    const existing2 = curr2 && curr2['ticket.requester'];
+                    const hasRequester2 = existing2 && (existing2.id || existing2.email);
+                    if (hasRequester2) {
+                      log('BG requester now set; abort instance', key);
+                      return null;
+                    }
+                    log('BG setting requester', user.id, 'on instance', key);
+                    return ic.set('ticket.requester', { id: user.id });
+                  });
+                })
+                .catch((e) => {
+                  log('BG get/set requester error', e);
+                });
+            })
+          );
+        } catch (err) {
+          log('BG set requester error', err);
+        }
+      }
+
+      function log() {
+        if (!LOG) return;
+        try {
+          console.log('[CXone BG]', ...arguments);
+        } catch (e) {}
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Source Offer Lookup</title>
+  <style>
+    :root {
+      --bg: #f7f9fc;
+      --panel: #ffffff;
+      --accent: #2563eb;
+      --muted: #6b7280;
+      --text: #0f172a;
+      --border: #e2e8f0;
+      --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+      --error: #b30000;
+      --success: #024d1f;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 16px;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 18px;
+      box-shadow: var(--shadow);
+      max-width: 520px;
+    }
+    h1 {
+      font-size: 18px;
+      margin: 0 0 4px;
+      letter-spacing: 0.2px;
+    }
+    .sub {
+      margin: 0 0 14px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    label {
+      display: block;
+      font-weight: 600;
+      margin-bottom: 6px;
+    }
+    input {
+      width: 100%;
+      padding: 11px 12px;
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      color: var(--text);
+      font-size: 14px;
+      outline: none;
+      transition: border 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+    }
+    input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+      background: #fff;
+    }
+    .row {
+      display: flex;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    button {
+      flex: 1;
+      padding: 11px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: linear-gradient(135deg, var(--accent), #3b82f6);
+      color: #ffffff;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+    button.secondary {
+      background: #f8fafc;
+      color: var(--text);
+    }
+    button:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 18px rgba(37, 99, 235, 0.15);
+      filter: brightness(1.02);
+    }
+    .status {
+      min-height: 18px;
+      margin-top: 10px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .pill {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: #f8fafc;
+      margin-top: 12px;
+      justify-content: space-between;
+    }
+    .pill strong {
+      color: var(--text);
+      letter-spacing: 0.3px;
+    }
+    .pill-content {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .muted { color: var(--muted); }
+    .stack { display: grid; gap: 10px; }
+    .chip-btn {
+      flex: 0 0 auto;
+      padding: 6px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #e0f2fe;
+      color: #075985;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.1s ease, box-shadow 0.1s ease;
+    }
+    .chip-btn:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 14px rgba(7, 89, 133, 0.15);
+    }
+    .suggestions { position: relative; }
+    .suggestions-list {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      margin-top: 6px;
+      box-shadow: var(--shadow);
+      max-height: 200px;
+      overflow: auto;
+      z-index: 5;
+      padding: 6px 0;
+    }
+    .suggestion-item {
+      padding: 10px 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: var(--text);
+      transition: background 0.1s ease;
+    }
+    .suggestion-item:hover { background: #f1f5f9; }
+    .pill-tag {
+      font-size: 11px;
+      color: var(--muted);
+      background: #e2e8f0;
+      border-radius: 10px;
+      padding: 2px 8px;
+      margin-left: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card" role="region" aria-label="Source offer lookup">
+    <h1>Source Offer Lookup</h1>
+    <p class="sub">Enter a source code to retrieve the promo + offer.</p>
+    <div class="stack">
+      <div class="suggestions">
+        <label for="source">Source code</label>
+        <input id="source" type="text" placeholder="e.g., INTTE1JDN" autocomplete="off" />
+        <div id="suggestions" class="suggestions-list" hidden></div>
+      </div>
+      <div class="row">
+        <button id="lookup" type="button">Lookup</button>
+        <button id="clear" class="secondary" type="button">Clear</button>
+      </div>
+      <div id="status" class="status" aria-live="polite"></div>
+      <div id="pill-promo" class="pill" hidden>
+        <div class="pill-content">
+          <span class="muted">Promo</span>
+          <strong id="promo-value"></strong>
+        </div>
+        <button id="copy-promo" class="chip-btn" type="button">Copy</button>
+      </div>
+      <div id="pill-offer" class="pill" hidden>
+        <span class="muted">Offer</span>
+        <strong id="offer-value"></strong>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const SOURCE_CODE_MAP_URL = "https://shopify-app-react-cf-dev.swansonvitamins.workers.dev/api/source-code-map";
+    const SOURCE_PROMO_MAP_URL = "https://shopify-app-react-cf-dev.swansonvitamins.workers.dev/api/source-promo-map";
+    const USE_PROXY_FOR_FILE_ORIGIN = true;
+    const proxyUrl = (url) => `https://corsproxy.io/?${encodeURIComponent(url)}`;
+
+    const sourceEl = document.getElementById("source");
+    const statusEl = document.getElementById("status");
+    const suggestionsEl = document.getElementById("suggestions");
+    const promoPill = document.getElementById("pill-promo");
+    const offerPill = document.getElementById("pill-offer");
+    const promoValue = document.getElementById("promo-value");
+    const offerValue = document.getElementById("offer-value");
+    const copyBtn = document.getElementById("copy-promo");
+    const lookupBtn = document.getElementById("lookup");
+    const clearBtn = document.getElementById("clear");
+    const MAX_SUGGESTIONS = 20;
+
+    let lastLog = [];
+    let sourceToPromoCache = null;
+    let promoMapCache = null;
+    let loadingMaps = null;
+    let cachedKeys = null;
+
+    lookupBtn.addEventListener("click", lookup);
+    clearBtn.addEventListener("click", resetForm);
+    copyBtn.addEventListener("click", copyPromo);
+    sourceEl.addEventListener("keypress", (e) => {
+      if (e.key === "Enter") lookup();
+    });
+    sourceEl.addEventListener("input", handleAutocomplete);
+    sourceEl.addEventListener("focus", handleAutocomplete);
+    sourceEl.addEventListener("blur", () => setTimeout(() => hideSuggestions(), 120));
+
+    function setStatus(message, isError = true) {
+      statusEl.textContent = message || "";
+      statusEl.style.color = isError ? "var(--error)" : "var(--success)";
+    }
+
+    function resetForm() {
+      sourceEl.value = "";
+      setStatus("");
+      promoPill.hidden = true;
+      offerPill.hidden = true;
+      promoValue.textContent = "";
+      offerValue.textContent = "";
+      lastLog = [];
+      suggestionsEl.hidden = true;
+      sourceEl.focus();
+    }
+
+    async function fetchWithLog(url) {
+      const entry = { url, started_at: new Date().toISOString(), transport: "fetch" };
+      try {
+        const useProxy = USE_PROXY_FOR_FILE_ORIGIN && window.location.protocol === "file:";
+        const target = useProxy ? proxyUrl(url) : url;
+        entry.transport = useProxy ? "fetch+corsproxy" : "fetch";
+        entry.target = target;
+        const response = await fetch(target, { headers: { Accept: "application/json" } });
+        const text = await response.text();
+        let parsed;
+        try {
+          parsed = JSON.parse(text);
+        } catch (_) {
+          parsed = undefined;
+        }
+        entry.status = response.status;
+        entry.statusText = response.statusText;
+        entry.ok = response.ok;
+        entry.headers = Object.fromEntries(response.headers.entries());
+        entry.body = text.slice(0, 4000);
+        lastLog.push(entry);
+
+        if (!response.ok) {
+          const err = new Error(`Fetch failed (${response.status} ${response.statusText || ""})`.trim());
+          err.status = response.status;
+          err.statusText = response.statusText;
+          err.body = text;
+          err.url = url;
+          throw err;
+        }
+        return parsed !== undefined ? parsed : text;
+      } catch (err) {
+        entry.error = err.message || String(err);
+        entry.errorName = err.name;
+        entry.errorStack = err.stack ? err.stack.split("\n")[0] : null;
+        entry.errorType = err.constructor ? err.constructor.name : null;
+        lastLog.push(entry);
+        throw err;
+      }
+    }
+
+    async function ensureMaps() {
+      if (sourceToPromoCache && promoMapCache) return;
+      if (loadingMaps) return loadingMaps;
+      loadingMaps = (async () => {
+        setStatus("Loading mappings...", false);
+        lastLog = [];
+        const [sourceToPromo, promoRaw] = await Promise.all([
+          fetchWithLog(SOURCE_CODE_MAP_URL),
+          fetchWithLog(SOURCE_PROMO_MAP_URL)
+        ]);
+        const promoMap = promoRaw && promoRaw.promo_to_offer ? promoRaw.promo_to_offer : promoRaw;
+        if (!promoMap || typeof promoMap !== "object") {
+          throw new Error("Unexpected promo map shape");
+        }
+        sourceToPromoCache = sourceToPromo;
+        promoMapCache = promoMap;
+        cachedKeys = Object.keys(sourceToPromoCache).sort((a, b) => a.localeCompare(b));
+        setStatus("");
+      })().catch((err) => {
+        loadingMaps = null;
+        throw err;
+      });
+      return loadingMaps;
+    }
+
+    function buildSuggestions(term) {
+      if (!cachedKeys) return [];
+      if (!term) return cachedKeys.slice(0, MAX_SUGGESTIONS);
+      const upper = term.toUpperCase();
+      const starts = cachedKeys.filter(k => k.startsWith(upper));
+      const contains = cachedKeys.filter(k => !k.startsWith(upper) && k.includes(upper));
+      return [...starts, ...contains].slice(0, MAX_SUGGESTIONS);
+    }
+
+    function renderSuggestions(list) {
+      suggestionsEl.innerHTML = "";
+      if (!list.length) {
+        suggestionsEl.hidden = true;
+        return;
+      }
+      list.forEach(code => {
+        const item = document.createElement("div");
+        item.className = "suggestion-item";
+        const promo = sourceToPromoCache ? sourceToPromoCache[code] : "";
+        item.innerHTML = `<span>${code}</span><span class="pill-tag">${promo || ""}</span>`;
+        item.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          sourceEl.value = code;
+          hideSuggestions();
+          lookup();
+        });
+        suggestionsEl.appendChild(item);
+      });
+      suggestionsEl.hidden = false;
+    }
+
+    function hideSuggestions() {
+      suggestionsEl.hidden = true;
+    }
+
+    async function handleAutocomplete() {
+      try {
+        await ensureMaps();
+        const term = sourceEl.value.trim();
+        const list = buildSuggestions(term);
+        renderSuggestions(list);
+      } catch (err) {
+        setStatus("Autocomplete unavailable", true);
+      }
+    }
+
+    async function lookup() {
+      const raw = sourceEl.value.trim().toUpperCase();
+      if (!raw) {
+        setStatus("Enter a source code.");
+        return;
+      }
+
+      setStatus("Loading...", false);
+      lookupBtn.disabled = true;
+      clearBtn.disabled = true;
+
+      try {
+        await ensureMaps();
+        const promoCode = sourceToPromoCache[raw];
+        if (!promoCode) {
+          setStatus("Source code not found.");
+          promoPill.hidden = true;
+          offerPill.hidden = true;
+          return;
+        }
+
+        const offerCode = promoMapCache[promoCode] || "N/A";
+        setStatus("Lookup complete.", false);
+        promoValue.textContent = promoCode;
+        offerValue.textContent = offerCode;
+        promoPill.hidden = false;
+        offerPill.hidden = false;
+        hideSuggestions();
+      } catch (err) {
+        setStatus(`Error: ${err.message || err}`);
+        promoPill.hidden = true;
+        offerPill.hidden = true;
+      } finally {
+        lookupBtn.disabled = false;
+        clearBtn.disabled = false;
+      }
+    }
+
+    async function copyPromo() {
+      const promo = promoValue.textContent.trim();
+      if (!promo) return;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(promo);
+        } else {
+          const textarea = document.createElement("textarea");
+          textarea.value = promo;
+          document.body.appendChild(textarea);
+          textarea.select();
+          document.execCommand("copy");
+          textarea.remove();
+        }
+        setStatus("Promo copied", false);
+      } catch (err) {
+        setStatus("Copy failed", true);
+      }
+    }
+  </script>
+</body>
+</html>

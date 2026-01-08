@@ -1,0 +1,25 @@
+{
+  "name": "Source Offer Lookup",
+  "author": {
+    "name": "Swanson",
+    "email": "kevin.wolf@swansonhealth.com",
+    "url": "https://www.swansonvitamins.com"
+  },
+  "defaultLocale": "en",
+  "location": {
+    "support": {
+      "ticket_sidebar": {
+        "url": "assets/iframe.html"
+      }
+    }
+  },
+  "requirements": {
+    "whitelisted_domains": [
+      "https://shopify-app-react-cf-dev.swansonvitamins.workers.dev"
+    ]
+  },
+  "version": "1.10",
+  "frameworkVersion": "2.0",
+  "singleInstall": true,
+  "private": true
+}

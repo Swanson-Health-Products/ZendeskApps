@@ -1,0 +1,8 @@
+{
+  "app": {
+    "name": "CXone Caller Lookup",
+    "short_description": "Receives a CXone call number and finds the Zendesk requester.",
+    "long_description": "CXone Caller Lookup listens for a call number sent from CXone (via postMessage or a small bridge endpoint) and searches Zendesk for the matching requester. Use the manual field as a fallback if no event is received.",
+    "installation_instructions": "Install in the ticket sidebar. Configure `cxoneAllowedOrigin` if your CXone domain differs, and optionally set `bridgeUrl` to a small service that returns { \"phone\": \"15551234567\" } for polling."
+  }
+}
