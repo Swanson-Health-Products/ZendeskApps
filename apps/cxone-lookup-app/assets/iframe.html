@@ -79,6 +79,9 @@
     (function() {
       const client = ZAFClient.init();
       client.invoke('resize', { width: '100%', height: '240px' });
+      const FAST_POLL_MS = 2000;
+      const SLOW_POLL_MS = 20000;
+      const AGE_THRESHOLD_MS = 5 * 60 * 1000;
       let settings = {};
       let accountSubdomain = null;
       let currentUserEmail = null;
@@ -125,11 +128,32 @@
           } catch (err) {
             // swallow errors; keep polling
           } finally {
-            bridgeTimer = setTimeout(poll, 5000);
+            const delay = await getPollingDelayMs();
+            bridgeTimer = setTimeout(poll, delay);
           }
         };
         setStatus('Polling bridge URL for call number...');
         poll();
+      }
+
+      async function getPollingDelayMs() {
+        const createdAt = await getTicketCreatedAt();
+        if (!createdAt) return FAST_POLL_MS;
+        const ts = Date.parse(createdAt);
+        if (!ts) return FAST_POLL_MS;
+        return Date.now() - ts >= AGE_THRESHOLD_MS ? SLOW_POLL_MS : FAST_POLL_MS;
+      }
+
+      async function getTicketCreatedAt() {
+        const fields = ['ticket.createdAt', 'ticket.created_at'];
+        for (const field of fields) {
+          try {
+            const resp = await client.get(field);
+            const value = resp && resp[field];
+            if (value) return value;
+          } catch (e) {}
+        }
+        return null;
       }
 
       async function isRequesterEmpty() {
