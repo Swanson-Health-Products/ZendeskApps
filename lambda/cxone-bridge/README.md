@@ -45,6 +45,13 @@ Optional:
 - Returns 204 if no answered call is found or if a phone number cannot be extracted.
 - When LOG_REQUESTS is true, phone numbers and contact IDs are logged; treat logs as sensitive.
 
+## API Gateway
+
+- HTTP API name: cxone-bridge-api
+- API ID: dt3u9hxf9e
+- Stages: prod, $default
+- Access logs: /aws/apigateway/cxone-bridge-api
+
 ## Monitoring
 
 - Lambda metrics: Invocations, Errors, Throttles, Duration in CloudWatch.
@@ -55,6 +62,13 @@ Optional:
 
 curl "https://<api-id>.execute-api.us-east-1.amazonaws.com/prod?username=agent@example.com" \
   -H "x-api-key: <api-key>"
+
+## Troubleshooting
+
+- Getting 401: API_KEY is set and your request is missing or has a bad key.
+- Getting 204 with active calls: agent lookup or call state may not be matching; check NICE user and contact state fields.
+- Getting 500: verify NIC credentials and region/version; check CloudWatch logs for the error message.
+- Need 200 vs 204 counts: query the access log group and filter by status.
 
 ## Deploy
 
