@@ -10,6 +10,9 @@
     (function() {
       const client = ZAFClient.init();
       const LOG = true;
+      const FAST_POLL_MS = 2000;
+      const SLOW_POLL_MS = 20000;
+      const AGE_THRESHOLD_MS = 5 * 60 * 1000;
       let settings = {};
       let currentUserEmail = null;
       let lastDigits = null;
@@ -48,7 +51,8 @@
             // keep polling even on errors
             log('BG poll error', err && err.message ? err.message : err);
           } finally {
-            bridgeTimer = setTimeout(poll, 5000);
+            const delay = await getPollingDelayMs();
+            bridgeTimer = setTimeout(poll, delay);
           }
         };
         log('BG polling started', url);
@@ -90,6 +94,52 @@
         } catch (e) {
           return true;
         }
+      }
+
+      async function getPollingDelayMs() {
+        try {
+          const instResp = await client.get('instances');
+          const instances = instResp && instResp.instances ? instResp.instances : {};
+          const entries = Object.keys(instances).map((key) => ({ key, meta: instances[key] || {} }));
+          const ticketInst = entries.filter(({ meta }) => {
+            const loc = (meta.location || '').toLowerCase();
+            return loc.includes('ticket_sidebar') || loc.includes('new_ticket_sidebar');
+          });
+          if (!ticketInst.length) return FAST_POLL_MS;
+          for (const { key } of ticketInst) {
+            const ageMs = await getTicketAgeMs(key);
+            if (ageMs === null) return FAST_POLL_MS;
+            if (ageMs < AGE_THRESHOLD_MS) return FAST_POLL_MS;
+          }
+          return SLOW_POLL_MS;
+        } catch (e) {
+          return FAST_POLL_MS;
+        }
+      }
+
+      async function getTicketAgeMs(instanceKey) {
+        try {
+          const ic = client.instance(instanceKey);
+          const createdAt = await getTicketCreatedAt(ic);
+          if (!createdAt) return null;
+          const ts = Date.parse(createdAt);
+          if (!ts) return null;
+          return Date.now() - ts;
+        } catch (e) {
+          return null;
+        }
+      }
+
+      async function getTicketCreatedAt(ic) {
+        const fields = ['ticket.createdAt', 'ticket.created_at'];
+        for (const field of fields) {
+          try {
+            const resp = await ic.get(field);
+            const value = resp && resp[field];
+            if (value) return value;
+          } catch (e) {}
+        }
+        return null;
       }
 
       function handleNumber(raw, source) {
