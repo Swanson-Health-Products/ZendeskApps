@@ -9,8 +9,8 @@ Zendesk ticket sidebar app plus a CXone bridge (AWS Lambda) that pulls the calle
   - Returns `200 { phone, contactId }` when an answered call is found; otherwise `204`.
 
 ## How the app works
-- **Background location**: polls `bridgeUrl` every 5s (adds `username=<agent email>`), looks up the user by phone, and pushes `ticket.requester` into all open ticket sidebars (new + existing) via the instances API. Works even if the panel isn’t opened.
-- **Ticket sidebar UI**: still shows status/result and will also set requester on match (same lookup logic).
+- **Background location**: polls `bridgeUrl` with adaptive intervals (2s for new tickets, 20s after 5 minutes) and sets `ticket.requester` in all open ticket sidebars (new + existing) via the instances API.
+- **Ticket sidebar UI**: shows status/result and also sets requester on match using the same lookup logic.
 - **Requester safety**: both background and sidebar only set the requester if none is present (checks for existing `ticket.requester.id` or `.email`), and re-check right before setting to avoid races on unsaved tickets.
 - **Race guard for new tickets**: both background and sidebar re-check the requester immediately before setting to avoid overwriting an agent selection on unsaved tickets.
 
