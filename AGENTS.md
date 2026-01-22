@@ -1,4 +1,13 @@
-﻿# Repository Guidelines
+# Repository Guidelines
+
+## Intentionality (Why this exists)
+
+This repo is structured around a few deliberate choices:
+
+- **Agent experience first**: sidebar tools that reduce context switching and support the “one ticket at a time” workflow.
+- **Small, composable integrations**: each app/Lambda has a narrow responsibility so changes are isolated and easier to test.
+- **Secrets stay out of the browser and git**: tokens/keys live in Zendesk secure settings and/or AWS Secrets Manager.
+- **Least privilege by default**: IAM roles and API keys should only grant what each integration needs.
 
 ## Project Structure & Module Organization
 
@@ -43,3 +52,9 @@ There is no test harness in this repository. Validate changes via:
 - Do **not** commit credentials.
 - Zendesk app settings (API base URL, API key, bridge URL, etc.) are configured in the Zendesk admin UI.
 - For Shopify: store the Admin API token in AWS Secrets Manager and grant the Lambda permission to read it.
+
+## Architecture Notes (High level)
+
+- **Zendesk → API Gateway/Lambda**: when calling external services that require privileged credentials, prefer a Lambda behind API Gateway.
+- **API keys**: use API Gateway API keys for simple request authentication; rotate periodically.
+- **Browser constraints**: Zendesk apps often call through the Zendesk Apps Proxy; keep endpoints and headers compatible and CORS-friendly.
