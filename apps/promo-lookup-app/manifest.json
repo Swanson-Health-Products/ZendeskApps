@@ -5,6 +5,7 @@
     "email": "kevin.wolf@swansonhealth.com",
     "url": "https://www.swansonvitamins.com"
   },
+  "icon": "assets/logo-small.png",
   "defaultLocale": "en",
   "location": {
     "support": {

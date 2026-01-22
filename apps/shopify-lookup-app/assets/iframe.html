@@ -1,0 +1,354 @@
+﻿<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Shopify Customer Lookup</title>
+  <style>
+    :root {
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      color: #0f172a;
+      background: #f8fafc;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 12px;
+      background: #f8fafc;
+    }
+    .card {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 12px;
+      box-shadow: 0 6px 18px rgba(15, 23, 42, 0.06);
+    }
+    h2 {
+      margin: 0 0 6px;
+      font-size: 18px;
+      font-weight: 700;
+      color: #0f172a;
+    }
+    p {
+      margin: 4px 0 10px;
+      color: #334155;
+      font-size: 12px;
+    }
+    label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      margin: 10px 0 4px;
+      color: #0f172a;
+    }
+    input {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      font-size: 13px;
+      background: #f8fafc;
+      color: #0f172a;
+    }
+    .row {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    button {
+      flex: 1;
+      padding: 11px 12px;
+      border-radius: 10px;
+      border: 1px solid #e2e8f0;
+      background: linear-gradient(135deg, #2563eb, #3b82f6);
+      color: #ffffff;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+    }
+    button.secondary {
+      background: #f8fafc;
+      color: #0f172a;
+    }
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+    button:hover:not(:disabled) {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 18px rgba(37, 99, 235, 0.15);
+      filter: brightness(1.02);
+    }
+    .status {
+      font-size: 12px;
+      color: #64748b;
+      margin-top: 8px;
+      min-height: 16px;
+    }
+    .error {
+      color: #b91c1c;
+      font-weight: 600;
+    }
+    .results {
+      margin-top: 10px;
+      display: grid;
+      gap: 8px;
+    }
+    .result {
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid #e2e8f0;
+      background: #f8fafc;
+    }
+    .result strong {
+      display: block;
+      color: #0f172a;
+      font-size: 13px;
+    }
+    .result span {
+      display: block;
+      color: #475569;
+      font-size: 12px;
+      margin-top: 2px;
+      word-break: break-word;
+    }
+    .line {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 2px;
+    }
+    .line span {
+      margin: 0;
+    }
+    .copy {
+      flex: none;
+      width: 20px;
+      height: 20px;
+      padding: 0;
+      border-radius: 6px;
+      border: 1px solid #e2e8f0;
+      background: #ffffff url('copy-alt.png') center/12px 12px no-repeat;
+      cursor: pointer;
+    }
+    .copy.copied {
+      border-color: #22c55e;
+      box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.2);
+      transform: scale(1.05);
+    }
+    .muted {
+      color: #94a3b8;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>Shopify Customer Lookup</h2>
+    <p>Search customers by name, email, phone, or Swanson ID.</p>
+
+    <label for="firstName">First name</label>
+    <input id="firstName" type="text" placeholder="Jane" />
+
+    <label for="lastName">Last name</label>
+    <input id="lastName" type="text" placeholder="Doe" />
+
+    <label for="email">Email</label>
+    <input id="email" type="text" placeholder="jane@example.com" />
+
+    <label for="phone">Phone</label>
+    <input id="phone" type="text" placeholder="15551234567" />
+
+    <label for="swansonId">Swanson ID</label>
+    <input id="swansonId" type="text" placeholder="12345" />
+
+    <label for="query">Advanced query</label>
+    <input id="query" type="text" placeholder="tag:vip" />
+
+    <div class="row">
+      <button id="lookup" type="button">Lookup</button>
+      <button id="clear" class="secondary" type="button">Clear</button>
+    </div>
+
+    <div id="status" class="status"></div>
+    <div id="results" class="results"></div>
+  </div>
+
+  <script src="https://static.zdassets.com/zendesk_app_framework_sdk/2.0/zaf_sdk.min.js"></script>
+  <script>
+    (function() {
+      const client = ZAFClient.init();
+      const statusEl = document.getElementById('status');
+      const resultsEl = document.getElementById('results');
+      const lookupBtn = document.getElementById('lookup');
+      const clearBtn = document.getElementById('clear');
+      const inputs = {
+        firstName: document.getElementById('firstName'),
+        lastName: document.getElementById('lastName'),
+        email: document.getElementById('email'),
+        phone: document.getElementById('phone'),
+        swansonId: document.getElementById('swansonId'),
+        query: document.getElementById('query')
+      };
+
+      let settings = {};
+
+      function resizeToContent() {
+        const height = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+        client.invoke('resize', { width: '100%', height: `${height}px` });
+      }
+
+      resizeToContent();
+      window.addEventListener('resize', resizeToContent);
+      const resizeObserver = new MutationObserver(resizeToContent);
+      resizeObserver.observe(document.body, { childList: true, subtree: true, attributes: true });
+
+      lookupBtn.addEventListener('click', lookup);
+      clearBtn.addEventListener('click', reset);
+      resultsEl.addEventListener('click', (event) => {
+        const target = event.target;
+        if (!(target instanceof HTMLElement)) return;
+        if (!target.classList.contains('copy')) return;
+        const text = target.getAttribute('data-copy') || '';
+        if (!text) return;
+        target.classList.add('copied');
+        setTimeout(() => target.classList.remove('copied'), 450);
+        copyToClipboard(text).catch((err) => console.error('Copy failed', err));
+      });
+      Object.values(inputs).forEach((input) => {
+        input.addEventListener('keypress', (e) => {
+          if (e.key === 'Enter') lookup();
+        });
+      });
+
+      client.metadata().then((meta) => {
+        settings = meta && meta.settings ? meta.settings : {};
+      });
+
+      function setStatus(message, isError) {
+        statusEl.textContent = message || '';
+        statusEl.classList.toggle('error', !!isError);
+      }
+
+      function reset() {
+        Object.values(inputs).forEach((input) => { input.value = ''; });
+        resultsEl.innerHTML = '';
+        setStatus('');
+      }
+
+      async function lookup() {
+        const apiBaseUrl = (settings.apiBaseUrl || '').trim();
+        const apiKey = (settings.apiKey || settings.apiKeyPublic || '').trim();
+        const maxResults = (settings.maxResults || '').trim();
+
+        if (!apiBaseUrl || !apiKey) {
+          setStatus('Missing API settings. Check app configuration.', true);
+          return;
+        }
+
+        const params = new URLSearchParams();
+        if (inputs.firstName.value.trim()) params.set('first_name', inputs.firstName.value.trim());
+        if (inputs.lastName.value.trim()) params.set('last_name', inputs.lastName.value.trim());
+        if (inputs.email.value.trim()) params.set('email', inputs.email.value.trim());
+        if (inputs.phone.value.trim()) params.set('phone', inputs.phone.value.trim());
+        if (inputs.swansonId.value.trim()) params.set('swanson_id', inputs.swansonId.value.trim());
+        if (inputs.query.value.trim()) params.set('query', inputs.query.value.trim());
+        if (maxResults) params.set('limit', maxResults);
+
+        if (![...params.keys()].length) {
+          setStatus('Enter at least one search field.', true);
+          return;
+        }
+
+        lookupBtn.disabled = true;
+        clearBtn.disabled = true;
+        resultsEl.innerHTML = '';
+        setStatus('Searching...', false);
+
+        try {
+          const url = `${apiBaseUrl.replace(/\/$/, '')}/search?${params.toString()}`;
+          const res = await client.request({
+            url,
+            type: 'GET',
+            headers: {
+              'X-Api-Key': apiKey,
+              'Accept': 'application/json'
+            },
+            dataType: 'json',
+            cache: false
+          });
+
+          const customers = res && Array.isArray(res.customers) ? res.customers : [];
+          renderResults(customers);
+          setStatus(customers.length ? `Found ${customers.length} customer(s).` : 'No matches found.', !customers.length);
+        } catch (err) {
+          console.error(err);
+          setStatus('Lookup failed. Check console for details.', true);
+        } finally {
+          lookupBtn.disabled = false;
+          clearBtn.disabled = false;
+        }
+      }
+
+      function renderResults(customers) {
+        resultsEl.innerHTML = '';
+        if (!customers.length) {
+          resultsEl.innerHTML = '<div class="result muted">No customers found.</div>';
+          return;
+        }
+        customers.forEach((c) => {
+          const node = document.createElement('div');
+          node.className = 'result';
+          const name = `${c.first_name || ''} ${c.last_name || ''}`.trim() || 'Unknown';
+          const idText = String(c.id || '');
+          const emailText = c.email || '';
+          const phoneText = c.phone || '';
+          const tagsText = c.tags || '';
+          node.innerHTML = `
+            <div class="line">
+              <strong>${escapeHtml(name)}</strong>
+              <button class="copy" type="button" aria-label="Copy name" data-copy="${escapeHtml(name)}"></button>
+            </div>
+            <div class="line">
+              <span>ID: ${escapeHtml(idText)}</span>
+              <button class="copy" type="button" aria-label="Copy ID" data-copy="${escapeHtml(idText)}"></button>
+            </div>
+            ${emailText ? `<div class="line"><span>Email: ${escapeHtml(emailText)}</span><button class="copy" type="button" aria-label="Copy email" data-copy="${escapeHtml(emailText)}"></button></div>` : ''}
+            ${phoneText ? `<div class="line"><span>Phone: ${escapeHtml(phoneText)}</span><button class="copy" type="button" aria-label="Copy phone" data-copy="${escapeHtml(phoneText)}"></button></div>` : ''}
+            ${tagsText ? `<div class="line"><span>Tags: ${escapeHtml(tagsText)}</span><button class="copy" type="button" aria-label="Copy tags" data-copy="${escapeHtml(tagsText)}"></button></div>` : ''}
+          `;
+          resultsEl.appendChild(node);
+        });
+      }
+
+      async function copyToClipboard(text) {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          await navigator.clipboard.writeText(text);
+          setStatus('Copied to clipboard.', false);
+          return;
+        }
+        const temp = document.createElement('textarea');
+        temp.value = text;
+        temp.setAttribute('readonly', '');
+        temp.style.position = 'absolute';
+        temp.style.left = '-9999px';
+        document.body.appendChild(temp);
+        temp.select();
+        document.execCommand('copy');
+        document.body.removeChild(temp);
+        setStatus('Copied to clipboard.', false);
+      }
+
+      function escapeHtml(str) {
+        return (str || '').replace(/[&<>"']/g, (ch) => ({
+          '&': '&amp;',
+          '<': '&lt;',
+          '>': '&gt;',
+          '"': '&quot;',
+          "'": '&#39;'
+        }[ch]));
+      }
+    })();
+  </script>
+</body>
+</html>

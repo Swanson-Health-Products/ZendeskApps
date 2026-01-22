@@ -1,0 +1,60 @@
+﻿{
+  "name": "Shopify Customer Lookup",
+  "author": {
+    "name": "Kevin Wolf",
+    "email": "kevin.wolf@swansonhealth.com",
+    "url": "https://swansonvitamins.com"
+  },
+  "icon": "assets/logo-small.png",
+  "version": "0.1.0",
+  "frameworkVersion": "2.0",
+  "defaultLocale": "en-US",
+  "private": true,
+  "location": {
+    "support": {
+      "ticket_sidebar": {
+        "url": "assets/iframe.html",
+        "flexible": true
+      },
+      "new_ticket_sidebar": {
+        "url": "assets/iframe.html",
+        "flexible": true
+      }
+    }
+  },
+  "domainWhitelist": [
+    "rvkg901wy9.execute-api.us-east-1.amazonaws.com"
+  ],
+  "parameters": [
+    {
+      "name": "apiBaseUrl",
+      "type": "text",
+      "required": true,
+      "default": "https://rvkg901wy9.execute-api.us-east-1.amazonaws.com/prod",
+      "secure": false,
+      "description": "Base URL for the Shopify lookup API Gateway stage."
+    },
+    {
+      "name": "apiKey",
+      "type": "text",
+      "required": true,
+      "secure": true,
+      "description": "API key used for Shopify lookup requests."
+    },
+    {
+      "name": "apiKeyPublic",
+      "type": "text",
+      "required": false,
+      "secure": false,
+      "description": "Public API key fallback for browser access."
+    },
+    {
+      "name": "maxResults",
+      "type": "text",
+      "required": false,
+      "default": "10",
+      "secure": false,
+      "description": "Max results to request from the API."
+    }
+  ]
+}
