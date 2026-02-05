@@ -396,7 +396,7 @@ function renderOrderItems() {
       renderOrderItems();
     });
     const priceCell = tr.querySelector('td:nth-child(4)');
-    if (item.discount_total && item.original_price && item.quantity) {
+    if (Number(item.discount_total || 0) > 0 && item.original_price && item.quantity) {
       const unitDiscount = Number(item.discount_total) / Number(item.quantity || 1);
       const discounted = Math.max(0, Number(item.original_price) - unitDiscount);
       priceCell.innerHTML = `
@@ -418,8 +418,8 @@ async function enrichOrderItemsFromSkus(items) {
       continue;
     }
     try {
-      const data = await apiGet(`/sku_lookup?sku=${encodeURIComponent(item.sku)}&limit=1`);
-      const variant = (data.variants || [])[0];
+      const data = await apiGet(`/sku_lookup?sku=${encodeURIComponent(item.sku)}&limit=1&cb=${Date.now()}`);
+      const variant = data.variant || (data.variants || [])[0] || null;
       if (variant) {
         const bogo = Boolean(variant.bogo);
         const qty = bogo ? roundUpToEven(item.quantity) : item.quantity;
@@ -430,8 +430,8 @@ async function enrichOrderItemsFromSkus(items) {
           price: item.fromDraft && item.price ? item.price : (variant.price || item.price),
           bogo,
           quantity: qty,
-          image_url: item.fromDraft && item.image_url ? item.image_url : (variant.image_url || item.image_url),
-          image_alt: item.fromDraft && item.image_alt ? item.image_alt : (variant.image_alt || item.image_alt),
+          image_url: variant.image_url || item.image_url || '',
+          image_alt: variant.image_alt || item.image_alt || '',
           restricted_states: parseRestrictedStates(variant.restricted_states || ''),
         });
         continue;
@@ -528,10 +528,31 @@ function renderOrders(orders, draftOrders) {
           currency: node.originalUnitPriceSet?.presentmentMoney?.currencyCode || '',
           quantity: node.quantity || 1,
           restricted_states: [],
-          image_url: node.variant?.image?.url || '',
-          image_alt: node.variant?.image?.altText || '',
+          image_url: node.variant?.image?.url || node.variant?.product?.featuredImage?.url || '',
+          image_alt: node.variant?.image?.altText || node.variant?.product?.featuredImage?.altText || '',
           fromDraft: true,
         })).filter((item) => item.variantId);
+        const orderLevelDiscount = Number(draft.totalDiscountsSet?.presentmentMoney?.amount || 0);
+        const hasLineDiscounts = orderItems.some((item) => Number(item.discount_total || 0) > 0);
+        if (orderLevelDiscount > 0 && !hasLineDiscounts) {
+          const totalBase = orderItems.reduce((sum, item) => {
+            const unit = Number(item.original_price || item.price || 0);
+            const qty = Number(item.quantity || 1);
+            return sum + unit * qty;
+          }, 0);
+          if (totalBase > 0) {
+            orderItems = orderItems.map((item) => {
+              const unit = Number(item.original_price || item.price || 0);
+              const qty = Number(item.quantity || 1);
+              const base = unit * qty;
+              const allocated = (orderLevelDiscount * (base / totalBase));
+              return {
+                ...item,
+                discount_total: allocated > 0 ? allocated.toFixed(2) : item.discount_total,
+              };
+            });
+          }
+        }
         const enriched = await enrichOrderItemsFromSkus(orderItems);
         orderItems = enriched.items;
         if (enriched.anyBogo) {
@@ -1026,7 +1047,7 @@ els.btnLookupSku.addEventListener('click', async () => {
     const sku = els.sku.value.trim();
     if (!sku) throw new Error('SKU required');
     setStatus(els.skuStatus, 'Looking up SKU...', '');
-    const data = await apiGet(`/sku_lookup?sku=${encodeURIComponent(sku)}&limit=5`);
+    const data = await apiGet(`/sku_lookup?sku=${encodeURIComponent(sku)}&limit=5&cb=${Date.now()}`);
     const variant = (data.variants || [])[0];
     if (!variant) throw new Error('No variant found');
     lastVariant = variant;

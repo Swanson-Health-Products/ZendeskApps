@@ -114,12 +114,24 @@ function normalizeMetafieldGid(input) {
   return trimmed;
 }
 
+function normalizeSku(input) {
+  return String(input || "").trim().toUpperCase();
+}
+
 function toCustomerLegacyId(input) {
   const trimmed = String(input || "").trim();
   if (!trimmed) return null;
   if (/^\d+$/.test(trimmed)) return trimmed;
   const match = trimmed.match(/gid:\/\/shopify\/Customer\/(\d+)/);
   return match ? match[1] : null;
+}
+
+function toVariantGid(input) {
+  const trimmed = String(input || "").trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("gid://shopify/ProductVariant/")) return trimmed;
+  if (/^\d+$/.test(trimmed)) return `gid://shopify/ProductVariant/${trimmed}`;
+  return null;
 }
 
 function isBogoPricing(pricingValue) {
@@ -1152,17 +1164,42 @@ async function fetchDraftOrder({ token, id }) {
         subtotalPrice
         totalPrice
         totalTax
+        totalDiscountsSet {
+          presentmentMoney {
+            amount
+            currencyCode
+          }
+        }
         lineItems(first: 50) {
           edges {
             node {
               id
               quantity
+              sku
               variant {
                 id
                 sku
+                title
+                product {
+                  title
+                  featuredImage {
+                    url
+                    altText
+                  }
+                }
+                image {
+                  url
+                  altText
+                }
               }
               title
               originalUnitPriceSet {
+                presentmentMoney {
+                  amount
+                  currencyCode
+                }
+              }
+              totalDiscountSet {
                 presentmentMoney {
                   amount
                   currencyCode
@@ -1186,7 +1223,30 @@ async function fetchDraftOrder({ token, id }) {
   return { draftOrder: data?.data?.draftOrder || null };
 }
 
-async function fetchSkus({ token, sku, limit }) {
+function mapVariantNode(node) {
+  return {
+    id: node.id,
+    sku: node.sku || "",
+    title: node.title || "",
+    price: node.price || "",
+    inventory_quantity: node.inventoryQuantity ?? null,
+    variant_pricing: node.metafield?.value || "",
+    bogo: isBogoPricing(node.metafield?.value),
+    restricted_states: node.restrictedStates?.value || node.product?.restrictedStates?.value || "",
+    image_url: node.image?.url || node.product?.featuredImage?.url || "",
+    image_alt: node.image?.altText || node.product?.featuredImage?.altText || "",
+    product: node.product
+      ? {
+          id: node.product.id,
+          title: node.product.title || "",
+          handle: node.product.handle || "",
+          status: node.product.status || "",
+        }
+      : null,
+  };
+}
+
+async function fetchSkusWithQuery({ token, query, limit }) {
   const graphqlQuery = `
     query($first: Int!, $query: String!) {
       productVariants(first: $first, query: $query) {
@@ -1230,7 +1290,7 @@ async function fetchSkus({ token, sku, limit }) {
     query: graphqlQuery,
     variables: {
       first: limit,
-      query: `sku:${sku}`,
+      query,
     },
   });
 
@@ -1240,27 +1300,181 @@ async function fetchSkus({ token, sku, limit }) {
   const edges = data?.data?.productVariants?.edges || [];
   return {
     count: edges.length,
-    variants: edges.map(({ node }) => ({
-      id: node.id,
-      sku: node.sku || "",
-      title: node.title || "",
-      price: node.price || "",
-      inventory_quantity: node.inventoryQuantity ?? null,
-      variant_pricing: node.metafield?.value || "",
-      bogo: isBogoPricing(node.metafield?.value),
-      restricted_states: node.restrictedStates?.value || node.product?.restrictedStates?.value || "",
-      image_url: node.image?.url || node.product?.featuredImage?.url || "",
-      image_alt: node.image?.altText || node.product?.featuredImage?.altText || "",
-      product: node.product
-        ? {
-            id: node.product.id,
-            title: node.product.title || "",
-            handle: node.product.handle || "",
-            status: node.product.status || "",
-          }
-        : null,
-    })),
+    variants: edges.map(({ node }) => mapVariantNode(node)),
   };
+}
+
+async function fetchVariantByGid({ token, id }) {
+  const graphqlQuery = `
+    query($id: ID!) {
+      node(id: $id) {
+        ... on ProductVariant {
+          id
+          sku
+          title
+          price
+          inventoryQuantity
+          metafield(namespace: "catalog_pricing", key: "variant_pricing") {
+            value
+          }
+          restrictedStates: metafield(namespace: "shipping", key: "restricted_states") {
+            value
+          }
+          image {
+            url
+            altText
+          }
+          product {
+            id
+            title
+            handle
+            status
+            restrictedStates: metafield(namespace: "shipping", key: "restricted_states") {
+              value
+            }
+            featuredImage {
+              url
+              altText
+            }
+          }
+        }
+      }
+    }
+  `;
+  const payload = JSON.stringify({
+    query: graphqlQuery,
+    variables: { id },
+  });
+
+  const { error, data } = await shopifyGraphqlRequest({ token, payload });
+  if (error) return { error };
+
+  const node = data?.data?.node || null;
+  if (!node) return { variant: null };
+  return { variant: mapVariantNode(node) };
+}
+
+async function fetchSkuFromProductsSearch({ token, sku, limit }) {
+  const graphqlQuery = `
+    query($first: Int!, $query: String!) {
+      products(first: $first, query: $query) {
+        edges {
+          node {
+            id
+            title
+            handle
+            status
+            restrictedStates: metafield(namespace: "shipping", key: "restricted_states") {
+              value
+            }
+            featuredImage {
+              url
+              altText
+            }
+            variants(first: 100) {
+              edges {
+                node {
+                  id
+                  sku
+                  title
+                  price
+                  inventoryQuantity
+                  metafield(namespace: "catalog_pricing", key: "variant_pricing") {
+                    value
+                  }
+                  restrictedStates: metafield(namespace: "shipping", key: "restricted_states") {
+                    value
+                  }
+                  image {
+                    url
+                    altText
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const payload = JSON.stringify({
+    query: graphqlQuery,
+    variables: {
+      first: limit,
+      query: `sku:${sku}`,
+    },
+  });
+
+  const { error, data } = await shopifyGraphqlRequest({ token, payload });
+  if (error) return { error };
+
+  const productEdges = data?.data?.products?.edges || [];
+  const normalized = normalizeSku(sku);
+  const matches = [];
+  productEdges.forEach(({ node }) => {
+    const product = node || {};
+    const variantEdges = product.variants?.edges || [];
+    variantEdges.forEach(({ node: variantNode }) => {
+      if (normalizeSku(variantNode?.sku) !== normalized) return;
+      const merged = {
+        ...variantNode,
+        product: {
+          id: product.id,
+          title: product.title || "",
+          handle: product.handle || "",
+          status: product.status || "",
+          restrictedStates: product.restrictedStates,
+          featuredImage: product.featuredImage,
+        },
+      };
+      matches.push(mapVariantNode(merged));
+    });
+  });
+
+  return { count: matches.length, variants: matches };
+}
+
+async function fetchVariantBySkuRest({ token, sku, limit }) {
+  const path = `/admin/api/${API_VERSION}/variants.json?sku=${encodeURIComponent(sku)}&limit=${limit}`;
+  const { status, body } = await httpsRequestWithRedirect({
+    method: "GET",
+    hostname: `${STORE}.myshopify.com`,
+    path,
+    headers: {
+      "X-Shopify-Access-Token": token,
+      "Accept": "application/json",
+    },
+  });
+  if (status < 200 || status >= 300) {
+    return { error: { status, body } };
+  }
+  const payload = JSON.parse(body || "{}");
+  const variants = Array.isArray(payload.variants) ? payload.variants : [];
+  return { variants };
+}
+
+async function fetchSkus({ token, sku, limit }) {
+  const normalized = normalizeSku(sku);
+  const queries = [
+    `sku:${sku}`,
+    `sku:'${sku}'`,
+    `sku:\"${sku}\"`,
+  ];
+  for (const query of queries) {
+    const result = await fetchSkusWithQuery({ token, query, limit });
+    if (result.error) return { error: result.error };
+    const exact = (result.variants || []).filter((v) => normalizeSku(v.sku) === normalized);
+    if (exact.length) {
+      return { count: exact.length, variants: exact };
+    }
+  }
+  const productSearch = await fetchSkuFromProductsSearch({ token, sku, limit });
+  if (productSearch.error) return { error: productSearch.error };
+  if (productSearch.variants?.length) {
+    return productSearch;
+  }
+  return { count: 0, variants: [] };
 }
 
 function parseJsonBody(event) {
@@ -1682,6 +1896,23 @@ exports.handler = async (event) => {
         return respond(405, { error: "Method not allowed" });
       }
       const params = event.queryStringParameters || {};
+      const variantRaw = params.variant_id || params.variantId || params.variant_gid || params.variantGid || "";
+      if (variantRaw) {
+        const variantGid = toVariantGid(variantRaw);
+        if (!variantGid) return respond(400, { error: "variant_id must be a Shopify variant id or gid" });
+        const token = await getToken();
+        const result = await fetchVariantByGid({ token, id: variantGid });
+        if (result.error) {
+          const status = result.error.status || 502;
+          return respond(status, {
+            error: "Shopify GraphQL error",
+            status,
+            body: String(result.error.body || "").slice(0, 2000),
+          });
+        }
+        return respond(200, { count: result.variant ? 1 : 0, variants: result.variant ? [result.variant] : [] });
+      }
+
       const sku = String(params.sku || "").trim();
       if (!sku) return respond(400, { error: "sku required" });
 
@@ -1697,6 +1928,29 @@ exports.handler = async (event) => {
         });
       }
       return respond(200, result);
+    }
+
+    if (path.endsWith("/variant_lookup")) {
+      if (event.httpMethod !== "POST") {
+        return respond(405, { error: "Method not allowed" });
+      }
+      const { value, error } = parseJsonBody(event);
+      if (error) return respond(400, { error });
+      const body = value || {};
+      const variantRaw = body.variant_id || body.variantId || body.variant_gid || body.variantGid || "";
+      const variantGid = toVariantGid(variantRaw);
+      if (!variantGid) return respond(400, { error: "variant_id required (id or gid)" });
+      const token = await getToken();
+      const result = await fetchVariantByGid({ token, id: variantGid });
+      if (result.error) {
+        const status = result.error.status || 502;
+        return respond(status, {
+          error: "Shopify GraphQL error",
+          status,
+          body: String(result.error.body || "").slice(0, 2000),
+        });
+      }
+      return respond(200, { variant: result.variant || null });
     }
 
     const params = event.queryStringParameters || {};
