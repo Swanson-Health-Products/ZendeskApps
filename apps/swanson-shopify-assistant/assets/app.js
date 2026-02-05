@@ -647,7 +647,13 @@ function renderOrders(orders, draftOrders) {
     refundBtn.addEventListener('click', async () => {
       const confirmed = window.confirm(`Refund ${order.name || 'this order'}? You will need to select line items and amounts.`);
       if (!confirmed) return;
-      setStatus(els.ordersStatus, 'Refund requires line item and transaction details. Not implemented yet.', 'bad');
+      try {
+        setStatus(els.ordersStatus, `Refunding ${order.name || 'order'}...`, '');
+        await apiPost('/order_refund', { order_id: order.legacy_id || order.id });
+        setStatus(els.ordersStatus, `Refund requested for ${order.name || 'order'}.`, 'good');
+      } catch (err) {
+        setStatus(els.ordersStatus, err.message, 'bad');
+      }
     });
 
     els.ordersList.appendChild(card);

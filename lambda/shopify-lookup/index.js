@@ -773,6 +773,106 @@ async function cancelOrder({ token, orderId }) {
   return { job: result?.job || null };
 }
 
+async function fetchOrderForRefund({ token, orderId }) {
+  const query = `
+    query($id: ID!) {
+      order(id: $id) {
+        id
+        name
+        lineItems(first: 50) {
+          edges {
+            node {
+              id
+              quantity
+            }
+          }
+        }
+        transactions {
+          id
+          kind
+          status
+          amountSet {
+            shopMoney {
+              amount
+              currencyCode
+            }
+          }
+        }
+      }
+    }
+  `;
+
+  const payload = JSON.stringify({
+    query,
+    variables: { id: orderId },
+  });
+
+  const { error, data } = await shopifyGraphqlRequest({ token, payload });
+  if (error) return { error };
+  return { order: data?.data?.order || null };
+}
+
+function pickRefundTransaction(transactions) {
+  const list = Array.isArray(transactions) ? transactions : [];
+  const preferred = list.find((t) => t.status === "SUCCESS" && (t.kind === "SALE" || t.kind === "CAPTURE"));
+  return preferred || list.find((t) => t.status === "SUCCESS") || null;
+}
+
+async function refundOrder({ token, orderId }) {
+  const { error, order } = await fetchOrderForRefund({ token, orderId });
+  if (error) return { error };
+  if (!order) return { error: { status: 404, body: "order not found" } };
+
+  const transaction = pickRefundTransaction(order.transactions || []);
+  if (!transaction?.id) {
+    return { error: { status: 400, body: "no refundable transactions found" } };
+  }
+
+  const lineItems = (order.lineItems?.edges || [])
+    .map(({ node }) => ({ lineItemId: node.id, quantity: node.quantity }))
+    .filter((item) => item.lineItemId && item.quantity > 0);
+  if (!lineItems.length) {
+    return { error: { status: 400, body: "no line items to refund" } };
+  }
+
+  const amount = transaction.amountSet?.shopMoney?.amount || null;
+  const refundInput = {
+    orderId,
+    refundLineItems: lineItems,
+    transactions: amount
+      ? [{ parentId: transaction.id, amount, kind: "REFUND" }]
+      : [{ parentId: transaction.id, kind: "REFUND" }],
+  };
+
+  const mutation = `
+    mutation RefundCreate($input: RefundInput!) {
+      refundCreate(input: $input) {
+        refund {
+          id
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+  `;
+
+  const payload = JSON.stringify({
+    query: mutation,
+    variables: { input: refundInput },
+  });
+
+  const { error: refundError, data: refundData } = await shopifyGraphqlRequest({ token, payload });
+  if (refundError) return { error: refundError };
+  const result = refundData?.data?.refundCreate;
+  const errors = result?.userErrors || [];
+  if (errors.length) {
+    return { error: { status: 400, body: JSON.stringify(errors) } };
+  }
+  return { refund: result?.refund || null };
+}
+
 async function shopifyGraphqlRequest({ token, payload }) {
   const { status, body } = await httpsRequest(
     {
@@ -1496,6 +1596,33 @@ exports.handler = async (event) => {
         });
       }
       return respond(200, { ok: true, job: result.job });
+    }
+
+    if (path.endsWith("/order_refund")) {
+      if (event.httpMethod !== "POST") {
+        return respond(405, { error: "Method not allowed" });
+      }
+      const { value, error } = parseJsonBody(event);
+      if (error) return respond(400, { error });
+      const body = value || {};
+      const orderId = String(body.order_id || body.orderId || "").trim();
+      const orderGid = orderId.startsWith("gid://shopify/Order/")
+        ? orderId
+        : (/^\d+$/.test(orderId) ? `gid://shopify/Order/${orderId}` : "");
+      if (!orderGid) {
+        return respond(400, { error: "order_id required (id or gid)" });
+      }
+      const token = await getToken();
+      const result = await refundOrder({ token, orderId: orderGid });
+      if (result.error) {
+        const status = result.error.status || 502;
+        return respond(status, {
+          error: "Shopify GraphQL error",
+          status,
+          body: String(result.error.body || "").slice(0, 2000),
+        });
+      }
+      return respond(200, { ok: true, refund: result.refund });
     }
 
     if (path.endsWith("/sku_lookup")) {
