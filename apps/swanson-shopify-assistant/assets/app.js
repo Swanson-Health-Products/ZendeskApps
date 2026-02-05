@@ -559,6 +559,7 @@ function renderOrders(orders, draftOrders) {
           <div class="order-meta">
             <span class="pill">Shipping: ${order.fulfillment_status || 'UNKNOWN'}</span>
             ${order.delivery_status ? `<span class="pill">Delivery: ${order.delivery_status}</span>` : ''}
+            ${order.latest_status ? `<span class="pill">Latest: ${order.latest_status}</span>` : ''}
             <span class="pill">Payment: ${order.financial_status || 'UNKNOWN'}</span>
             <span class="pill">${formatMoney(order.total, order.currency)}</span>
           </div>
@@ -579,10 +580,16 @@ function renderOrders(orders, draftOrders) {
       li.textContent = `${item.sku || ''} - ${item.title || ''} - Qty ${item.quantity || 0}`;
       list.appendChild(li);
     });
-    if (order.tracking_urls && order.tracking_urls.length) {
-      order.tracking_urls.forEach((url) => {
+    if (order.tracking_numbers && order.tracking_numbers.length) {
+      order.tracking_numbers.forEach((number, idx) => {
+        const company = (order.tracking_companies || [])[idx] || 'Carrier';
+        const url = (order.tracking_urls || [])[idx] || '';
         const li = document.createElement('li');
-        li.innerHTML = `Tracking: <a href="${url}" target="_blank" rel="noopener">${url}</a>`;
+        if (url) {
+          li.innerHTML = `Tracking: ${company} ${number} - <a href="${url}" target="_blank" rel="noopener">${url}</a>`;
+        } else {
+          li.textContent = `Tracking: ${company} ${number}`;
+        }
         list.appendChild(li);
       });
     }

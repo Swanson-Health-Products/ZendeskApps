@@ -6,7 +6,7 @@
                    "url":  "https://swansonvitamins.com"
                },
     "icon":  "assets/logo-small.png",
-    "version":  "0.1.8",
+    "version":  "0.1.9",
     "frameworkVersion":  "2.0",
     "defaultLocale":  "en-US",
     "private":  true,

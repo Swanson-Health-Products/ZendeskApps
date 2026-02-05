@@ -452,6 +452,7 @@ async function fetchCustomerOrders({ token, customerId }) {
                 trackingInfo {
                   number
                   url
+                  company
                 }
               }
               totalPriceSet {
@@ -505,6 +506,8 @@ async function fetchCustomerOrders({ token, customerId }) {
     delivery_status: node.fulfillments?.[0]?.status || null,
     tracking_numbers: (node.fulfillments?.[0]?.trackingInfo || []).map((t) => t.number).filter(Boolean),
     tracking_urls: (node.fulfillments?.[0]?.trackingInfo || []).map((t) => t.url).filter(Boolean),
+    tracking_companies: (node.fulfillments?.[0]?.trackingInfo || []).map((t) => t.company).filter(Boolean),
+    latest_status: node.fulfillments?.[0]?.status || node.displayFulfillmentStatus || null,
     total: node.totalPriceSet?.presentmentMoney?.amount || null,
     currency: node.totalPriceSet?.presentmentMoney?.currencyCode || null,
     line_items: (node.lineItems?.edges || []).map(({ node: line }) => ({
