@@ -199,6 +199,7 @@ async function apiGet(path) {
     headers: {
       'X-Api-Key': settings.apiKey || '',
       'Accept': 'application/json',
+      'Cache-Control': 'no-cache',
     },
   });
 }

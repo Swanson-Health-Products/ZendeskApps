@@ -21,6 +21,9 @@ function respond(statusCode, body, extraHeaders = {}) {
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Headers": "Content-Type, X-Api-Key",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+      "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+      "Pragma": "no-cache",
+      "Expires": "0",
       ...extraHeaders,
     },
     body: body ? JSON.stringify(body) : "",
@@ -1927,7 +1930,7 @@ exports.handler = async (event) => {
           body: String(result.error.body || "").slice(0, 2000),
         });
       }
-      return respond(200, result);
+      return respond(200, { ...result, requested_sku: sku });
     }
 
     if (path.endsWith("/variant_lookup")) {
