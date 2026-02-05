@@ -402,6 +402,7 @@ function renderOrderItems() {
       priceCell.innerHTML = `
         <span class="price-strike">$${Number(item.original_price).toFixed(2)}</span>
         <span class="price-new">$${discounted.toFixed(2)}</span>
+        <span class="price-savings">Savings: $${Number(unitDiscount).toFixed(2)} each</span>
       `;
     }
     els.orderItems.appendChild(tr);
