@@ -304,6 +304,17 @@ function parseRestrictedStates(value) {
     .filter(Boolean);
 }
 
+function normalizeSku(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function pickVariantBySku(variants, sku) {
+  if (!Array.isArray(variants) || !variants.length) return null;
+  const target = normalizeSku(sku);
+  if (!target) return variants[0] || null;
+  return variants.find((variant) => normalizeSku(variant?.sku) === target) || variants[0] || null;
+}
+
 function hasRestrictedState(restricted, state) {
   if (!state) return false;
   return restricted.includes(state.toUpperCase());
@@ -418,8 +429,8 @@ async function enrichOrderItemsFromSkus(items) {
       continue;
     }
     try {
-      const data = await apiGet(`/sku_lookup?sku=${encodeURIComponent(item.sku)}&limit=1&cb=${Date.now()}`);
-      const variant = data.variant || (data.variants || [])[0] || null;
+      const data = await apiGet(`/sku_lookup?sku=${encodeURIComponent(item.sku)}&limit=5&cb=${Date.now()}`);
+      const variant = data.variant || pickVariantBySku(data.variants || [], item.sku);
       if (variant) {
         const bogo = Boolean(variant.bogo);
         const qty = bogo ? roundUpToEven(item.quantity) : item.quantity;
@@ -1048,7 +1059,7 @@ els.btnLookupSku.addEventListener('click', async () => {
     if (!sku) throw new Error('SKU required');
     setStatus(els.skuStatus, 'Looking up SKU...', '');
     const data = await apiGet(`/sku_lookup?sku=${encodeURIComponent(sku)}&limit=5&cb=${Date.now()}`);
-    const variant = (data.variants || [])[0];
+    const variant = data.variant || pickVariantBySku(data.variants || [], sku);
     if (!variant) throw new Error('No variant found');
     lastVariant = variant;
     els.variantPrice.value = variant.price || '';
