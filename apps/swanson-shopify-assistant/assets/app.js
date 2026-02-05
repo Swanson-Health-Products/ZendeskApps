@@ -395,6 +395,15 @@ function renderOrderItems() {
       orderItems.splice(idx, 1);
       renderOrderItems();
     });
+    const priceCell = tr.querySelector('td:nth-child(4)');
+    if (item.discount_total && item.original_price && item.quantity) {
+      const unitDiscount = Number(item.discount_total) / Number(item.quantity || 1);
+      const discounted = Math.max(0, Number(item.original_price) - unitDiscount);
+      priceCell.innerHTML = `
+        <span class="price-strike">$${Number(item.original_price).toFixed(2)}</span>
+        <span class="price-new">$${discounted.toFixed(2)}</span>
+      `;
+    }
     els.orderItems.appendChild(tr);
   });
 }
@@ -416,7 +425,7 @@ async function enrichOrderItemsFromSkus(items) {
         if (bogo) anyBogo = true;
         updated.push({
           ...item,
-          title: variant.product?.title || variant.title || item.title,
+          title: item.fromDraft && item.title ? item.title : (variant.product?.title || variant.title || item.title),
           price: variant.price || item.price,
           bogo,
           quantity: qty,
@@ -511,12 +520,16 @@ function renderOrders(orders, draftOrders) {
         orderItems = lineEdges.map(({ node }) => ({
           variantId: node.variant?.id || '',
           sku: node.sku || node.variant?.sku || '',
-          title: node.title || node.name || '',
+          title: node.variant?.product?.title || node.title || node.name || node.variant?.title || '',
           price: node.originalUnitPriceSet?.presentmentMoney?.amount || '',
+          original_price: node.originalUnitPriceSet?.presentmentMoney?.amount || '',
+          discount_total: node.totalDiscountSet?.presentmentMoney?.amount || '',
+          currency: node.originalUnitPriceSet?.presentmentMoney?.currencyCode || '',
           quantity: node.quantity || 1,
           restricted_states: [],
-          image_url: '',
-          image_alt: '',
+          image_url: node.variant?.image?.url || '',
+          image_alt: node.variant?.image?.altText || '',
+          fromDraft: true,
         })).filter((item) => item.variantId);
         const enriched = await enrichOrderItemsFromSkus(orderItems);
         orderItems = enriched.items;
