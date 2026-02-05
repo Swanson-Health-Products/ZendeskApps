@@ -603,6 +603,35 @@ function renderOrders(orders, draftOrders) {
       }
     });
 
+    const refundPanel = document.createElement('div');
+    refundPanel.className = 'refund-panel';
+    refundPanel.style.display = 'none';
+    refundPanel.innerHTML = `
+      <div class="status">Select items to refund.</div>
+      <div class="refund-items"></div>
+      <div class="refund-actions">
+        <button class="secondary btn-refund-submit">Submit Refund</button>
+        <button class="secondary btn-refund-cancel">Cancel</button>
+      </div>
+    `;
+    card.appendChild(refundPanel);
+
+    const refundItemsEl = refundPanel.querySelector('.refund-items');
+    items.forEach((item) => {
+      const row = document.createElement('div');
+      row.className = 'refund-item';
+      row.innerHTML = `
+        <input type="checkbox" />
+        <span>${item.sku || ''} - ${item.title || ''}</span>
+        <input type="number" min="1" value="${item.quantity || 1}" />
+      `;
+      row.dataset.lineItemId = item.line_item_id || '';
+      row.dataset.maxQty = String(item.quantity || 1);
+      const qtyInput = row.querySelector('input[type="number"]');
+      qtyInput.max = String(item.quantity || 1);
+      refundItemsEl.appendChild(row);
+    });
+
     const holdBtn = card.querySelector('.btn-hold');
     const cancelBtn = card.querySelector('.btn-cancel');
     const refundBtn = card.querySelector('.btn-refund');
@@ -647,10 +676,39 @@ function renderOrders(orders, draftOrders) {
     refundBtn.addEventListener('click', async () => {
       const confirmed = window.confirm(`Refund ${order.name || 'this order'}? You will need to select line items and amounts.`);
       if (!confirmed) return;
+      refundPanel.style.display = refundPanel.style.display === 'none' ? 'block' : 'none';
+    });
+
+    const refundSubmit = refundPanel.querySelector('.btn-refund-submit');
+    const refundCancel = refundPanel.querySelector('.btn-refund-cancel');
+    refundCancel.addEventListener('click', () => {
+      refundPanel.style.display = 'none';
+    });
+    refundSubmit.addEventListener('click', async () => {
       try {
+        const selected = Array.from(refundItemsEl.querySelectorAll('.refund-item'))
+          .map((row) => {
+            const checkbox = row.querySelector('input[type="checkbox"]');
+            const qtyInput = row.querySelector('input[type="number"]');
+            if (!checkbox.checked) return null;
+            const maxQty = Number(row.dataset.maxQty || 1);
+            const qty = Math.max(1, Math.min(Number(qtyInput.value || 1), maxQty));
+            return {
+              line_item_id: row.dataset.lineItemId,
+              quantity: qty,
+            };
+          })
+          .filter((item) => item && item.line_item_id);
+
+        if (!selected.length) {
+          setStatus(els.ordersStatus, 'Select at least one item to refund.', 'bad');
+          return;
+        }
+
         setStatus(els.ordersStatus, `Refunding ${order.name || 'order'}...`, '');
-        await apiPost('/order_refund', { order_id: order.legacy_id || order.id });
+        await apiPost('/order_refund', { order_id: order.legacy_id || order.id, line_items: selected });
         setStatus(els.ordersStatus, `Refund requested for ${order.name || 'order'}.`, 'good');
+        refundPanel.style.display = 'none';
       } catch (err) {
         setStatus(els.ordersStatus, err.message, 'bad');
       }

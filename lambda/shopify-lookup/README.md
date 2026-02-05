@@ -21,3 +21,4 @@ Returns `{ draft_order, invoice_url }` for `/draft_order_update`.
 Returns `{ draft_order }` for `/draft_order_get`.
 Returns `{ ok, job }` for `/order_cancel`.
 Returns `{ ok, refund }` for `/order_refund`.
+`/order_refund` accepts optional `line_items` array: `{ line_item_id, quantity }` for item-level refunds.

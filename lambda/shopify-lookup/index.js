@@ -461,18 +461,25 @@ async function fetchCustomerOrders({ token, customerId }) {
                   currencyCode
                 }
               }
-              lineItems(first: 50) {
-                edges {
-                  node {
-                    title
-                    sku
-                    quantity
-                    variant {
-                      image {
-                        url
-                        altText
-                      }
-                    }
+        lineItems(first: 50) {
+          edges {
+            node {
+              id
+              title
+              sku
+              quantity
+              discountedTotalSet {
+                shopMoney {
+                  amount
+                  currencyCode
+                }
+              }
+              variant {
+                image {
+                  url
+                  altText
+                }
+              }
                   }
                 }
               }
@@ -514,6 +521,9 @@ async function fetchCustomerOrders({ token, customerId }) {
       title: line.title || "",
       sku: line.sku || "",
       quantity: line.quantity || 0,
+      line_item_id: line.id || "",
+      total_amount: line.discountedTotalSet?.shopMoney?.amount || null,
+      currency: line.discountedTotalSet?.shopMoney?.currencyCode || null,
       image_url: line.variant?.image?.url || null,
       image_alt: line.variant?.image?.altText || "",
     })),
@@ -784,6 +794,12 @@ async function fetchOrderForRefund({ token, orderId }) {
             node {
               id
               quantity
+              discountedTotalSet {
+                shopMoney {
+                  amount
+                  currencyCode
+                }
+              }
             }
           }
         }
@@ -818,7 +834,17 @@ function pickRefundTransaction(transactions) {
   return preferred || list.find((t) => t.status === "SUCCESS") || null;
 }
 
-async function refundOrder({ token, orderId }) {
+function normalizeRefundLineItems(input) {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((item) => ({
+      line_item_id: String(item.line_item_id || item.lineItemId || "").trim(),
+      quantity: Number(item.quantity || 0),
+    }))
+    .filter((item) => item.line_item_id && Number.isFinite(item.quantity) && item.quantity > 0);
+}
+
+async function refundOrder({ token, orderId, lineItemsInput }) {
   const { error, order } = await fetchOrderForRefund({ token, orderId });
   if (error) return { error };
   if (!order) return { error: { status: 404, body: "order not found" } };
@@ -828,19 +854,44 @@ async function refundOrder({ token, orderId }) {
     return { error: { status: 400, body: "no refundable transactions found" } };
   }
 
-  const lineItems = (order.lineItems?.edges || [])
-    .map(({ node }) => ({ lineItemId: node.id, quantity: node.quantity }))
-    .filter((item) => item.lineItemId && item.quantity > 0);
+  const orderLineItems = (order.lineItems?.edges || [])
+    .map(({ node }) => ({
+      id: node.id,
+      quantity: node.quantity,
+      total_amount: node.discountedTotalSet?.shopMoney?.amount || null,
+      currency: node.discountedTotalSet?.shopMoney?.currencyCode || null,
+    }));
+
+  const requested = normalizeRefundLineItems(lineItemsInput);
+  const lineItems = requested.length
+    ? requested.map((item) => {
+      const match = orderLineItems.find((li) => li.id === item.line_item_id);
+      if (!match) return null;
+      const qty = Math.min(item.quantity, match.quantity);
+      return { lineItemId: match.id, quantity: qty, total_amount: match.total_amount, currency: match.currency, max_quantity: match.quantity };
+    }).filter(Boolean)
+    : orderLineItems.map((li) => ({ lineItemId: li.id, quantity: li.quantity, total_amount: li.total_amount, currency: li.currency, max_quantity: li.quantity }))
+        .filter((item) => item.lineItemId && item.quantity > 0);
+
   if (!lineItems.length) {
     return { error: { status: 400, body: "no line items to refund" } };
   }
 
-  const amount = transaction.amountSet?.shopMoney?.amount || null;
+  let amount = null;
+  const currency = lineItems.find((item) => item.currency)?.currency || transaction.amountSet?.shopMoney?.currencyCode || null;
+  if (lineItems.every((item) => item.total_amount && item.max_quantity)) {
+    const total = lineItems.reduce((sum, item) => {
+      const unit = Number(item.total_amount || 0) / Number(item.max_quantity || 1);
+      return sum + unit * item.quantity;
+    }, 0);
+    amount = total > 0 ? total.toFixed(2) : null;
+  }
+
   const refundInput = {
     orderId,
-    refundLineItems: lineItems,
-    transactions: amount
-      ? [{ parentId: transaction.id, amount, kind: "REFUND" }]
+    refundLineItems: lineItems.map((item) => ({ lineItemId: item.lineItemId, quantity: item.quantity })),
+    transactions: amount && currency
+      ? [{ parentId: transaction.id, amount, kind: "REFUND", currency }]
       : [{ parentId: transaction.id, kind: "REFUND" }],
   };
 
@@ -1613,7 +1664,8 @@ exports.handler = async (event) => {
         return respond(400, { error: "order_id required (id or gid)" });
       }
       const token = await getToken();
-      const result = await refundOrder({ token, orderId: orderGid });
+      const lineItemsInput = body.line_items || body.lineItems || [];
+      const result = await refundOrder({ token, orderId: orderGid, lineItemsInput });
       if (result.error) {
         const status = result.error.status || 502;
         return respond(status, {
