@@ -1652,6 +1652,7 @@ exports.handler = async (event) => {
       if (event.httpMethod !== "POST") {
         return respond(405, { error: "Method not allowed" });
       }
+      const tStart = Date.now();
       const { value, error } = parseJsonBody(event);
       if (error) return respond(400, { error });
       const body = value || {};
@@ -1668,6 +1669,7 @@ exports.handler = async (event) => {
       if (!lineItems.length) {
         return respond(400, { error: "line_items required" });
       }
+      console.log(`[draft_order_update] items=${lineItems.length}`);
 
       let normalizedLineItems = lineItems.map((item) => ({
         variantId: item.variant_id || item.variantId,
@@ -1684,11 +1686,13 @@ exports.handler = async (event) => {
         if (code) discountCodes.push(code);
       }
 
+      const tBogoStart = Date.now();
       const bogoResult = await applyBogoRules({
         token: await getToken(),
         lineItems: normalizedLineItems,
         discountCodes,
       });
+      console.log(`[draft_order_update] applyBogoRules ms=${Date.now() - tBogoStart}`);
       if (bogoResult.error) {
         const status = bogoResult.error.status || 502;
         return respond(status, {
@@ -1708,7 +1712,9 @@ exports.handler = async (event) => {
       }
 
       const token = await getToken();
+      const tUpdateStart = Date.now();
       const result = await updateDraftOrder({ token, id: draftOrderGid, input });
+      console.log(`[draft_order_update] updateDraftOrder ms=${Date.now() - tUpdateStart}`);
       if (result.error) {
         const status = result.error.status || 502;
         return respond(status, {
@@ -1719,6 +1725,7 @@ exports.handler = async (event) => {
       }
 
       const draftOrder = result.draftOrder;
+      console.log(`[draft_order_update] total ms=${Date.now() - tStart}`);
       return respond(200, {
         draft_order: draftOrder,
         invoice_url: draftOrder?.invoiceUrl || null,
