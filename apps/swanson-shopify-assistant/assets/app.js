@@ -427,11 +427,11 @@ async function enrichOrderItemsFromSkus(items) {
         updated.push({
           ...item,
           title: item.fromDraft && item.title ? item.title : (variant.product?.title || variant.title || item.title),
-          price: variant.price || item.price,
+          price: item.fromDraft && item.price ? item.price : (variant.price || item.price),
           bogo,
           quantity: qty,
-          image_url: variant.image_url || item.image_url,
-          image_alt: variant.image_alt || item.image_alt,
+          image_url: item.fromDraft && item.image_url ? item.image_url : (variant.image_url || item.image_url),
+          image_alt: item.fromDraft && item.image_alt ? item.image_alt : (variant.image_alt || item.image_alt),
           restricted_states: parseRestrictedStates(variant.restricted_states || ''),
         });
         continue;
