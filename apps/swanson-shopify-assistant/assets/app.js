@@ -40,9 +40,7 @@ const els = {
   sku: document.getElementById('sku'),
   skuQty: document.getElementById('skuQty'),
   variantPrice: document.getElementById('variantPrice'),
-  productName: document.getElementById('productName'),
   btnLookupSku: document.getElementById('btnLookupSku'),
-  btnSearchProductName: document.getElementById('btnSearchProductName'),
   btnAddSku: document.getElementById('btnAddSku'),
   skuStatus: document.getElementById('skuStatus'),
   skuCard: document.getElementById('skuCard'),
@@ -437,11 +435,15 @@ function renderProductResults(variants) {
   });
 }
 
-async function lookupSkuAndRender(sku) {
+async function lookupSkuAndRender(sku, options = {}) {
+  const { throwOnMissing = true } = options;
   setStatus(els.skuStatus, 'Looking up SKU...', '');
   const data = await apiGet(`/sku_lookup?sku=${encodeURIComponent(sku)}&limit=5&cb=${Date.now()}`);
   const variant = data.variant || pickVariantBySku(data.variants || [], sku);
-  if (!variant) throw new Error('No variant found');
+  if (!variant) {
+    if (throwOnMissing) throw new Error('No variant found');
+    return null;
+  }
   lastVariant = variant;
   els.variantPrice.value = variant.price || '';
   renderSkuCard(variant);
@@ -449,6 +451,7 @@ async function lookupSkuAndRender(sku) {
     els.promoCode.value = 'INT999';
   }
   setStatus(els.skuStatus, `Found ${data.count} variant(s).`, 'good');
+  return variant;
 }
 
 function renderOrderItems() {
@@ -1125,37 +1128,33 @@ async function fetchOrdersForCustomer(customerId) {
 
 els.btnLookupSku.addEventListener('click', async () => {
   try {
-    const sku = els.sku.value.trim();
-    if (!sku) throw new Error('SKU required');
-    await lookupSkuAndRender(sku);
+    const query = els.sku.value.trim();
+    if (!query) throw new Error('Search value required');
+    const variant = await lookupSkuAndRender(query, { throwOnMissing: false });
+    if (variant) {
+      if (els.productResults) els.productResults.innerHTML = '';
+      return;
+    }
+
+    setStatus(els.skuStatus, 'No SKU match. Searching by product name...', '');
+    const cacheKey = query.toLowerCase();
+    const cached = cacheGet(productSearchCache, cacheKey, productSearchCacheTtlMs);
+    if (cached) {
+      renderProductResults(cached);
+      setStatus(els.skuStatus, `Loaded ${cached.length} cached result(s).`, 'good');
+      return;
+    }
+    const data = await apiGet(`/product_search?query=${encodeURIComponent(query)}&limit=5&cb=${Date.now()}`);
+    const variants = data.variants || [];
+    cacheSet(productSearchCache, cacheKey, variants);
+    renderProductResults(variants);
+    setStatus(els.skuStatus, `Found ${variants.length} variant(s).`, variants.length ? 'good' : '');
   } catch (err) {
     setStatus(els.skuStatus, err.message, 'bad');
   }
 });
 
-if (els.btnSearchProductName) {
-  els.btnSearchProductName.addEventListener('click', async () => {
-    try {
-      const query = (els.productName?.value || '').trim();
-      if (!query) throw new Error('Product name required');
-      setStatus(els.skuStatus, 'Searching by product name...', '');
-      const cacheKey = query.toLowerCase();
-      const cached = cacheGet(productSearchCache, cacheKey, productSearchCacheTtlMs);
-      if (cached) {
-        renderProductResults(cached);
-        setStatus(els.skuStatus, `Loaded ${cached.length} cached result(s).`, 'good');
-        return;
-      }
-      const data = await apiGet(`/product_search?query=${encodeURIComponent(query)}&limit=5&cb=${Date.now()}`);
-      const variants = data.variants || [];
-      cacheSet(productSearchCache, cacheKey, variants);
-      renderProductResults(variants);
-      setStatus(els.skuStatus, `Found ${variants.length} variant(s).`, variants.length ? 'good' : '');
-    } catch (err) {
-      setStatus(els.skuStatus, err.message, 'bad');
-    }
-  });
-}
+// product search now falls back automatically when SKU search misses
 
 els.btnAddSku.addEventListener('click', () => {
   if (!lastVariant) {
