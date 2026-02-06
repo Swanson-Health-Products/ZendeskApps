@@ -1113,17 +1113,10 @@ async function updateDraftOrder({ token, id, input }) {
           subtotalPrice
           totalPrice
           totalTax
-          lineItems(first: 50) {
-            edges {
-              node {
-                id
-                quantity
-                variant {
-                  id
-                  sku
-                }
-                title
-              }
+          totalDiscountsSet {
+            presentmentMoney {
+              amount
+              currencyCode
             }
           }
         }
