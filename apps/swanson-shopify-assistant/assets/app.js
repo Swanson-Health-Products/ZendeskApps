@@ -40,10 +40,13 @@ const els = {
   sku: document.getElementById('sku'),
   skuQty: document.getElementById('skuQty'),
   variantPrice: document.getElementById('variantPrice'),
+  productName: document.getElementById('productName'),
   btnLookupSku: document.getElementById('btnLookupSku'),
+  btnSearchProductName: document.getElementById('btnSearchProductName'),
   btnAddSku: document.getElementById('btnAddSku'),
   skuStatus: document.getElementById('skuStatus'),
   skuCard: document.getElementById('skuCard'),
+  productResults: document.getElementById('productResults'),
   draftOrderId: document.getElementById('draftOrderId'),
   invoiceUrl: document.getElementById('invoiceUrl'),
   invoiceLink: document.getElementById('invoiceLink'),
@@ -71,6 +74,8 @@ let autoSearchDone = false;
 let requesterEmail = '';
 let userEditedEmail = false;
 let prefillActive = true;
+const productSearchCache = new Map();
+const productSearchCacheTtlMs = 2 * 60 * 1000;
 
 const client = ZAFClient.init();
 let settings = {};
@@ -309,6 +314,20 @@ function normalizeSku(value) {
   return String(value || '').trim().toUpperCase();
 }
 
+function cacheGet(cache, key, ttlMs) {
+  const entry = cache.get(key);
+  if (!entry) return null;
+  if (Date.now() - entry.ts > ttlMs) {
+    cache.delete(key);
+    return null;
+  }
+  return entry.value;
+}
+
+function cacheSet(cache, key, value) {
+  cache.set(key, { value, ts: Date.now() });
+}
+
 function pickVariantBySku(variants, sku) {
   if (!Array.isArray(variants) || !variants.length) return null;
   const target = normalizeSku(sku);
@@ -380,6 +399,56 @@ function renderSkuCard(variant) {
       </div>
     </div>
   `;
+}
+
+function renderProductResults(variants) {
+  if (!els.productResults) return;
+  if (!variants || !variants.length) {
+    els.productResults.innerHTML = '';
+    return;
+  }
+  const items = variants.slice(0, 10).map((variant) => {
+    const img = variant.image_url || variant.product?.featuredImage?.url || '';
+    const title = variant.product?.title || variant.title || '';
+    const sku = variant.sku || '';
+    const price = variant.price ? `$${variant.price}` : '';
+    return `
+      <li>
+        <div style="display:flex; gap:10px; align-items:center;">
+          ${img ? `<img src="${img}" alt="${variant.image_alt || ''}" style="width:36px;height:36px;object-fit:cover;border-radius:6px;">` : ''}
+          <div style="flex:1;">
+            <div style="font-weight:600;">${title}</div>
+            <div style="font-size:12px; color:#556;">${sku} ${price}</div>
+          </div>
+          <button class="btn-compact secondary" data-sku="${sku}">Use SKU</button>
+        </div>
+      </li>
+    `;
+  }).join('');
+  els.productResults.innerHTML = `<ul class="list">${items}</ul>`;
+  Array.from(els.productResults.querySelectorAll('button[data-sku]')).forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const sku = btn.getAttribute('data-sku') || '';
+      if (!sku) return;
+      els.sku.value = sku;
+      els.productResults.innerHTML = '';
+      await lookupSkuAndRender(sku);
+    });
+  });
+}
+
+async function lookupSkuAndRender(sku) {
+  setStatus(els.skuStatus, 'Looking up SKU...', '');
+  const data = await apiGet(`/sku_lookup?sku=${encodeURIComponent(sku)}&limit=5&cb=${Date.now()}`);
+  const variant = data.variant || pickVariantBySku(data.variants || [], sku);
+  if (!variant) throw new Error('No variant found');
+  lastVariant = variant;
+  els.variantPrice.value = variant.price || '';
+  renderSkuCard(variant);
+  if (variant.bogo) {
+    els.promoCode.value = 'INT999';
+  }
+  setStatus(els.skuStatus, `Found ${data.count} variant(s).`, 'good');
 }
 
 function renderOrderItems() {
@@ -1058,21 +1127,35 @@ els.btnLookupSku.addEventListener('click', async () => {
   try {
     const sku = els.sku.value.trim();
     if (!sku) throw new Error('SKU required');
-    setStatus(els.skuStatus, 'Looking up SKU...', '');
-    const data = await apiGet(`/sku_lookup?sku=${encodeURIComponent(sku)}&limit=5&cb=${Date.now()}`);
-    const variant = data.variant || pickVariantBySku(data.variants || [], sku);
-    if (!variant) throw new Error('No variant found');
-    lastVariant = variant;
-    els.variantPrice.value = variant.price || '';
-    renderSkuCard(variant);
-    if (variant.bogo) {
-      els.promoCode.value = 'INT999';
-    }
-    setStatus(els.skuStatus, `Found ${data.count} variant(s).`, 'good');
+    await lookupSkuAndRender(sku);
   } catch (err) {
     setStatus(els.skuStatus, err.message, 'bad');
   }
 });
+
+if (els.btnSearchProductName) {
+  els.btnSearchProductName.addEventListener('click', async () => {
+    try {
+      const query = (els.productName?.value || '').trim();
+      if (!query) throw new Error('Product name required');
+      setStatus(els.skuStatus, 'Searching by product name...', '');
+      const cacheKey = query.toLowerCase();
+      const cached = cacheGet(productSearchCache, cacheKey, productSearchCacheTtlMs);
+      if (cached) {
+        renderProductResults(cached);
+        setStatus(els.skuStatus, `Loaded ${cached.length} cached result(s).`, 'good');
+        return;
+      }
+      const data = await apiGet(`/product_search?query=${encodeURIComponent(query)}&limit=5&cb=${Date.now()}`);
+      const variants = data.variants || [];
+      cacheSet(productSearchCache, cacheKey, variants);
+      renderProductResults(variants);
+      setStatus(els.skuStatus, `Found ${variants.length} variant(s).`, variants.length ? 'good' : '');
+    } catch (err) {
+      setStatus(els.skuStatus, err.message, 'bad');
+    }
+  });
+}
 
 els.btnAddSku.addEventListener('click', () => {
   if (!lastVariant) {

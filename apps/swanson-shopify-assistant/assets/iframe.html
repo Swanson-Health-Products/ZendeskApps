@@ -454,13 +454,19 @@
           <label>Price</label>
           <input id="variantPrice" readonly />
         </div>
+        <div>
+          <label>Product name</label>
+          <input id="productName" placeholder="Search by product title" />
+        </div>
       </div>
       <div class="row" style="margin-top:10px;">
         <button id="btnLookupSku">Lookup SKU</button>
+        <button class="secondary" id="btnSearchProductName">Search Name</button>
         <button class="secondary" id="btnAddSku">Add To Order</button>
       </div>
       <div class="status" id="skuStatus"></div>
       <div id="skuCard"></div>
+      <div id="productResults"></div>
 
       <div style="margin-top:16px;"></div>
       <h3>Draft Order</h3>
