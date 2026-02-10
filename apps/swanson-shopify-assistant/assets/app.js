@@ -739,12 +739,25 @@ function renderOrders(orders, draftOrders) {
       li.className = 'order-detail-row';
       const fulfilledQty = Number(item.fulfilled_quantity || 0);
       const totalQty = Number(item.quantity || 0);
+      const paidTotal = item.total_amount ? formatMoney(item.total_amount, item.currency || order.currency) : '';
+      const thumb = item.image_url || '';
+      const safeTitle = item.title || '';
+      const safeSku = item.sku || '';
       const fulfillmentText = totalQty > 0
         ? `Fulfilled ${Math.min(fulfilledQty, totalQty)}/${totalQty}`
         : 'Fulfillment unknown';
       li.innerHTML = `
-        <span class="detail-main">${item.sku || ''} - ${item.title || ''}</span>
-        <span class="detail-meta">Qty ${totalQty} · ${fulfillmentText}</span>
+        <div class="detail-left">
+          ${thumb ? `<img class="detail-thumb" src="${thumb}" alt="${safeTitle || safeSku}" loading="lazy" />` : '<div class="detail-thumb detail-thumb-empty">No image</div>'}
+          <div class="detail-text">
+            <span class="detail-main">${safeSku} - ${safeTitle}</span>
+            <span class="detail-meta">Qty ${totalQty} · ${fulfillmentText}</span>
+          </div>
+        </div>
+        <div class="detail-right">
+          <span class="detail-paid-label">Paid</span>
+          <span class="detail-paid-value">${paidTotal || '-'}</span>
+        </div>
       `;
       itemsList.appendChild(li);
     });
@@ -781,14 +794,12 @@ function renderOrders(orders, draftOrders) {
             label.textContent = `Tracking: ${company} ${number}`.trim();
             row.appendChild(label);
             if (url) {
-              const sep = document.createElement('span');
-              sep.textContent = ' - ';
-              row.appendChild(sep);
               const link = document.createElement('a');
               link.href = url;
               link.target = '_blank';
               link.rel = 'noopener';
-              link.textContent = url;
+              link.className = 'tracking-btn';
+              link.textContent = 'Tracking';
               row.appendChild(link);
             }
             shipmentCard.appendChild(row);
@@ -821,14 +832,12 @@ function renderOrders(orders, draftOrders) {
         label.textContent = `Tracking: ${company} ${number}`;
         row.appendChild(label);
         if (url) {
-          const sep = document.createElement('span');
-          sep.textContent = ' - ';
-          row.appendChild(sep);
           const link = document.createElement('a');
           link.href = url;
           link.target = '_blank';
           link.rel = 'noopener';
-          link.textContent = url;
+          link.className = 'tracking-btn';
+          link.textContent = 'Tracking';
           row.appendChild(link);
         }
         shipList.appendChild(row);
