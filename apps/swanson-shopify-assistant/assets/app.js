@@ -714,7 +714,7 @@ function renderOrders(orders, draftOrders) {
         </div>
         <div class="pill">Order · Click to expand</div>
       </div>
-      <ul class="order-items" style="display:none;"></ul>
+      <div class="order-items" style="display:none;"></div>
       <div class="order-actions">
         <button class="secondary btn-hold">Put On Hold</button>
         <button class="secondary btn-cancel">Cancel Order</button>
@@ -722,71 +722,138 @@ function renderOrders(orders, draftOrders) {
       </div>
     `;
 
-    const list = card.querySelector('.order-items');
+    const details = card.querySelector('.order-items');
+    const itemsSection = document.createElement('div');
+    itemsSection.className = 'order-detail-section';
+    const itemsTitle = document.createElement('div');
+    itemsTitle.className = 'order-detail-title';
+    itemsTitle.textContent = 'Line Items';
+    const itemsList = document.createElement('div');
+    itemsList.className = 'order-detail-list';
+    itemsSection.appendChild(itemsTitle);
+    itemsSection.appendChild(itemsList);
+    details.appendChild(itemsSection);
+
     items.forEach((item) => {
-      const li = document.createElement('li');
+      const li = document.createElement('div');
+      li.className = 'order-detail-row';
       const fulfilledQty = Number(item.fulfilled_quantity || 0);
       const totalQty = Number(item.quantity || 0);
       const fulfillmentText = totalQty > 0
         ? `Fulfilled ${Math.min(fulfilledQty, totalQty)}/${totalQty}`
         : 'Fulfillment unknown';
-      li.textContent = `${item.sku || ''} - ${item.title || ''} - Qty ${totalQty} (${fulfillmentText})`;
-      list.appendChild(li);
+      li.innerHTML = `
+        <span class="detail-main">${item.sku || ''} - ${item.title || ''}</span>
+        <span class="detail-meta">Qty ${totalQty} · ${fulfillmentText}</span>
+      `;
+      itemsList.appendChild(li);
     });
+
+    const shipSection = document.createElement('div');
+    shipSection.className = 'order-detail-section';
+    const shipTitle = document.createElement('div');
+    shipTitle.className = 'order-detail-title';
+    shipTitle.textContent = 'Shipments';
+    const shipList = document.createElement('div');
+    shipList.className = 'order-detail-list';
+    shipSection.appendChild(shipTitle);
+    shipSection.appendChild(shipList);
+    details.appendChild(shipSection);
+
     if (Array.isArray(order.shipments) && order.shipments.length) {
       order.shipments.forEach((shipment, shipmentIdx) => {
-        const shipmentLabel = document.createElement('li');
-        shipmentLabel.innerHTML = `<strong>Shipment ${shipmentIdx + 1}: ${formatShipmentState(shipment.status, order.fulfillment_status)}</strong>`;
-        list.appendChild(shipmentLabel);
+        const shipmentCard = document.createElement('div');
+        shipmentCard.className = 'shipment-card';
+        const shipmentLabel = document.createElement('div');
+        shipmentLabel.className = 'shipment-title';
+        shipmentLabel.textContent = `Shipment ${shipmentIdx + 1}: ${formatShipmentState(shipment.status, order.fulfillment_status)}`;
+        shipmentCard.appendChild(shipmentLabel);
 
         const tracking = Array.isArray(shipment.tracking) ? shipment.tracking : [];
-        tracking.forEach((track) => {
-          const company = track.company || 'Carrier';
-          const number = track.number || '';
-          const url = track.url || '';
-          const li = document.createElement('li');
-          if (url) {
-            li.innerHTML = `Tracking: ${company} ${number} - <a href="${url}" target="_blank" rel="noopener">${url}</a>`;
-          } else {
-            li.textContent = `Tracking: ${company} ${number}`.trim();
-          }
-          list.appendChild(li);
-        });
+        if (tracking.length) {
+          tracking.forEach((track) => {
+            const company = track.company || 'Carrier';
+            const number = track.number || '';
+            const url = track.url || '';
+            const row = document.createElement('div');
+            row.className = 'shipment-track';
+            const label = document.createElement('span');
+            label.textContent = `Tracking: ${company} ${number}`.trim();
+            row.appendChild(label);
+            if (url) {
+              const sep = document.createElement('span');
+              sep.textContent = ' - ';
+              row.appendChild(sep);
+              const link = document.createElement('a');
+              link.href = url;
+              link.target = '_blank';
+              link.rel = 'noopener';
+              link.textContent = url;
+              row.appendChild(link);
+            }
+            shipmentCard.appendChild(row);
+          });
+        } else {
+          const noTrack = document.createElement('div');
+          noTrack.className = 'shipment-note';
+          noTrack.textContent = 'No tracking details posted.';
+          shipmentCard.appendChild(noTrack);
+        }
 
         const shipmentItems = Array.isArray(shipment.line_items) ? shipment.line_items : [];
-        shipmentItems.forEach((line) => {
-          const li = document.createElement('li');
-          li.textContent = `Fulfilled in shipment: ${line.sku || ''} - ${line.title || ''} - Qty ${line.quantity || 0}`;
-          list.appendChild(li);
-        });
+        if (shipmentItems.length) {
+          shipmentItems.forEach((line) => {
+            const li = document.createElement('div');
+            li.className = 'shipment-item';
+            li.textContent = `Fulfilled: ${line.sku || ''} - ${line.title || ''} · Qty ${line.quantity || 0}`;
+            shipmentCard.appendChild(li);
+          });
+        }
+        shipList.appendChild(shipmentCard);
       });
     } else if (order.tracking_numbers && order.tracking_numbers.length) {
       order.tracking_numbers.forEach((number, idx) => {
         const company = (order.tracking_companies || [])[idx] || 'Carrier';
         const url = (order.tracking_urls || [])[idx] || '';
-        const li = document.createElement('li');
+        const row = document.createElement('div');
+        row.className = 'shipment-track';
+        const label = document.createElement('span');
+        label.textContent = `Tracking: ${company} ${number}`;
+        row.appendChild(label);
         if (url) {
-          li.innerHTML = `Tracking: ${company} ${number} - <a href="${url}" target="_blank" rel="noopener">${url}</a>`;
-        } else {
-          li.textContent = `Tracking: ${company} ${number}`;
+          const sep = document.createElement('span');
+          sep.textContent = ' - ';
+          row.appendChild(sep);
+          const link = document.createElement('a');
+          link.href = url;
+          link.target = '_blank';
+          link.rel = 'noopener';
+          link.textContent = url;
+          row.appendChild(link);
         }
-        list.appendChild(li);
+        shipList.appendChild(row);
       });
     } else if (String(order.fulfillment_status || '').toUpperCase() === 'FULFILLED') {
-      const li = document.createElement('li');
-      li.textContent = 'Shipped (no tracking details posted).';
-      list.appendChild(li);
+      const note = document.createElement('div');
+      note.className = 'shipment-note';
+      note.textContent = 'Shipped (no tracking details posted).';
+      shipList.appendChild(note);
+    } else {
+      const note = document.createElement('div');
+      note.className = 'shipment-note';
+      note.textContent = 'No shipments yet.';
+      shipList.appendChild(note);
     }
 
     const header = card.querySelector('.order-header');
     header.addEventListener('click', () => {
-      const isOpening = list.style.display === 'none';
+      const isOpening = details.style.display === 'none';
       if (isOpening) {
         document.querySelectorAll('.order-item-card .order-items').forEach((other) => {
-          if (other !== list) other.style.display = 'none';
+          if (other !== details) other.style.display = 'none';
         });
       }
-      list.style.display = isOpening ? 'block' : 'none';
+      details.style.display = isOpening ? 'block' : 'none';
     });
 
     const refundPanel = document.createElement('div');
