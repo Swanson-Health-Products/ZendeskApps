@@ -20,6 +20,10 @@ const els = {
   newCustomerStatus: document.getElementById('newCustomerStatus'),
   customerStatus: document.getElementById('customerStatus'),
   customerResults: document.getElementById('customerResults'),
+  customerProfile: document.getElementById('customerProfile'),
+  customerProfileGrid: document.getElementById('customerProfileGrid'),
+  customerSubscriptions: document.getElementById('customerSubscriptions'),
+  macroStatus: document.getElementById('macroStatus'),
   ordersStatus: document.getElementById('ordersStatus'),
   ordersList: document.getElementById('ordersList'),
   btnNewOrder: document.getElementById('btnNewOrder'),
@@ -76,6 +80,7 @@ let requesterEmail = '';
 let userEditedEmail = false;
 let prefillActive = true;
 let currentAddressValidation = { valid: true, requiresOverride: false, message: '' };
+let lastCustomerProfile = null;
 const productSearchCache = new Map();
 const productSearchCacheTtlMs = 2 * 60 * 1000;
 
@@ -176,6 +181,26 @@ function setStatus(el, message, type) {
   el.className = type ? `status ${type}` : 'status';
 }
 
+function formatMarketingState(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw || raw === 'unknown' || raw === 'not_subscribed') return 'Not Subscribed';
+  if (raw === 'subscribed') return 'Subscribed';
+  if (raw === 'pending') return 'Pending';
+  if (raw === 'unsubscribed') return 'Unsubscribed';
+  return raw.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function getInventoryBadge(inventory) {
+  if (inventory === null || inventory === undefined || inventory === '') {
+    return '<span class="inventory-badge">Unknown</span>';
+  }
+  const qty = Number(inventory);
+  if (!Number.isFinite(qty)) return '<span class="inventory-badge">Unknown</span>';
+  if (qty <= 0) return '<span class="inventory-badge out">Out</span>';
+  if (qty <= 5) return `<span class="inventory-badge low">Low: ${qty}</span>`;
+  return `<span class="inventory-badge">In stock: ${qty}</span>`;
+}
+
 function ensureSettings() {
   settings.apiBaseUrl = (settings.apiBaseUrl || DEFAULT_API_BASE_URL || '').trim();
   settings.apiKey = (settings.apiKey || settings.apiKeyPublic || '').trim();
@@ -254,6 +279,57 @@ function renderCustomers(customers, selectedId) {
     li.addEventListener('click', () => handleCustomerSelect(c, customers));
     els.customerResults.appendChild(li);
   });
+}
+
+function renderCustomerProfile(profile) {
+  lastCustomerProfile = profile || null;
+  if (!els.customerProfile || !els.customerProfileGrid || !els.customerSubscriptions) return;
+  if (!profile) {
+    els.customerProfile.style.display = 'none';
+    els.customerProfileGrid.innerHTML = '';
+    els.customerSubscriptions.innerHTML = '';
+    return;
+  }
+  els.customerProfile.style.display = 'block';
+  const fullName = `${profile.first_name || ''} ${profile.last_name || ''}`.trim();
+  els.customerProfileGrid.innerHTML = `
+    <div class="profile-item"><strong>${fullName || 'Unknown'}</strong>Name</div>
+    <div class="profile-item"><strong>${profile.email || '-'}</strong>Email</div>
+    <div class="profile-item"><strong>${profile.phone || '-'}</strong>Phone</div>
+    <div class="profile-item"><strong>${formatMoney(profile.lifetime_value, profile.currency)}</strong>Lifetime Value</div>
+    <div class="profile-item"><strong>${profile.orders_count || 0}</strong>Total Orders</div>
+    <div class="profile-item"><strong>${profile.last_order_name || '-'}</strong>Last Order</div>
+    <div class="profile-item"><strong>${formatMarketingState(profile.email_marketing_state)}</strong>Email Marketing</div>
+    <div class="profile-item"><strong>${formatMarketingState(profile.sms_marketing_state)}</strong>SMS Marketing</div>
+  `;
+
+  const subscriptions = Array.isArray(profile.subscriptions) ? profile.subscriptions : [];
+  if (!subscriptions.length) {
+    els.customerSubscriptions.innerHTML = '<li>No subscription activity found in recent orders.</li>';
+    return;
+  }
+  els.customerSubscriptions.innerHTML = '';
+  subscriptions.slice(0, 8).forEach((sub) => {
+    const li = document.createElement('li');
+    li.textContent = `${sub.sku || ''} ${sub.title || ''} · ${sub.selling_plan || 'Plan'} · Qty ${sub.quantity || 0}`;
+    els.customerSubscriptions.appendChild(li);
+  });
+}
+
+async function applyAgentMacro(text) {
+  const message = String(text || '').trim();
+  if (!message) return;
+  try {
+    await client.invoke('ticket.comment.appendText', `${message}\n`);
+    setStatus(els.macroStatus, 'Macro inserted into internal note.', 'good');
+  } catch (err) {
+    try {
+      await navigator.clipboard.writeText(message);
+      setStatus(els.macroStatus, 'Could not insert directly. Macro copied to clipboard.', 'bad');
+    } catch (clipErr) {
+      setStatus(els.macroStatus, 'Unable to insert macro automatically.', 'bad');
+    }
+  }
 }
 
 function setActiveModule(step) {
@@ -456,6 +532,7 @@ function renderSkuCard(variant) {
   }
   const img = variant.image_url ? `<img src="${variant.image_url}" alt="${variant.image_alt || ''}">` : '<div class="pill">No image</div>';
   const bogo = variant.bogo ? '<span class="pill">BOGO</span>' : '';
+  const inventoryBadge = getInventoryBadge(variant.inventory_quantity);
   const restricted = parseRestrictedStates(variant.restricted_states || '');
   const restrictedLabel = restricted.length ? `<span class="pill">Restricted: ${restricted.join(', ')}</span>` : '';
   els.skuCard.innerHTML = `
@@ -463,7 +540,7 @@ function renderSkuCard(variant) {
       ${img}
       <div>
         <div><strong>${variant.product?.title || variant.title}</strong></div>
-        <div class="status">SKU ${variant.sku} - $${variant.price} ${bogo} ${restrictedLabel}</div>
+        <div class="status">SKU ${variant.sku} - $${variant.price} ${bogo} ${restrictedLabel} ${inventoryBadge}</div>
       </div>
     </div>
   `;
@@ -480,13 +557,14 @@ function renderProductResults(variants) {
     const title = variant.product?.title || variant.title || '';
     const sku = variant.sku || '';
     const price = variant.price ? `$${variant.price}` : '';
+    const inventory = getInventoryBadge(variant.inventory_quantity);
     return `
       <li>
         <div style="display:flex; gap:10px; align-items:center;">
           ${img ? `<img src="${img}" alt="${variant.image_alt || ''}" style="width:36px;height:36px;object-fit:cover;border-radius:6px;">` : ''}
           <div style="flex:1;">
             <div style="font-weight:600;">${title}</div>
-            <div style="font-size:12px; color:#556;">${sku} ${price}</div>
+            <div style="font-size:12px; color:#556;">${sku} ${price} ${inventory}</div>
           </div>
           <button class="btn-compact secondary" data-sku="${sku}">Use SKU</button>
         </div>
@@ -536,6 +614,7 @@ function renderOrderItems() {
       <td>${item.sku}</td>
       <td>${item.title}${item.bogo ? ' (BOGO)' : ''}</td>
       <td>$${item.price || ''}</td>
+      <td>${getInventoryBadge(item.inventory_quantity)}</td>
       <td><input class="qty-input" type="number" min="1" value="${item.quantity}"></td>
       <td><button class="secondary">Remove</button></td>
     `;
@@ -580,10 +659,12 @@ async function enrichOrderItemsFromSkus(items) {
         if (bogo) anyBogo = true;
         updated.push({
           ...item,
+          variantId: variant.id || item.variantId || '',
           title: item.fromDraft && item.title ? item.title : (variant.product?.title || variant.title || item.title),
           price: item.fromDraft && item.price ? item.price : (variant.price || item.price),
           bogo,
           quantity: qty,
+          inventory_quantity: variant.inventory_quantity ?? item.inventory_quantity ?? null,
           image_url: variant.image_url || item.image_url || '',
           image_alt: variant.image_alt || item.image_alt || '',
           restricted_states: parseRestrictedStates(variant.restricted_states || ''),
@@ -708,6 +789,7 @@ function renderOrders(orders, draftOrders) {
           discount_total: node.totalDiscountSet?.presentmentMoney?.amount || '',
           currency: node.originalUnitPriceSet?.presentmentMoney?.currencyCode || '',
           quantity: node.quantity || 1,
+          inventory_quantity: null,
           restricted_states: [],
           image_url: node.variant?.image?.url || node.variant?.product?.featuredImage?.url || '',
           image_alt: node.variant?.image?.altText || node.variant?.product?.featuredImage?.altText || '',
@@ -742,7 +824,6 @@ function renderOrders(orders, draftOrders) {
         renderOrderItems();
         updateShippingRestrictionWarning();
         setStatus(els.draftStatus, `Loaded ${order.name || 'draft order'} for editing.`, 'good');
-        minimizeOrdersSection();
         setActiveModule('order');
       } catch (err) {
         setStatus(els.draftStatus, err.message, 'bad');
@@ -787,6 +868,7 @@ function renderOrders(orders, draftOrders) {
       </div>
       <div class="order-items" style="display:none;"></div>
       <div class="order-actions">
+        <button class="secondary btn-reorder">Reorder Items</button>
         <button class="secondary btn-hold">Put On Hold</button>
         <button class="secondary btn-cancel">Cancel Order</button>
         <button class="secondary btn-refund">Refund</button>
@@ -965,6 +1047,7 @@ function renderOrders(orders, draftOrders) {
       refundItemsEl.appendChild(row);
     });
 
+    const reorderBtn = card.querySelector('.btn-reorder');
     const holdBtn = card.querySelector('.btn-hold');
     const cancelBtn = card.querySelector('.btn-cancel');
     const refundBtn = card.querySelector('.btn-refund');
@@ -979,9 +1062,48 @@ function renderOrders(orders, draftOrders) {
     });
 
     const fulfillment = String(order.fulfillment_status || '').toUpperCase();
+    reorderBtn.disabled = !items.length;
     holdBtn.disabled = fulfillment !== 'UNFULFILLED';
     cancelBtn.disabled = fulfillment !== 'UNFULFILLED';
     refundBtn.disabled = fulfillment !== 'FULFILLED' && fulfillment !== 'PARTIALLY_FULFILLED';
+
+    reorderBtn.addEventListener('click', async () => {
+      try {
+        setStatus(els.ordersStatus, `Loading line items from ${order.name || 'order'}...`, '');
+        els.draftOrderId.value = '';
+        setInvoiceUrl('');
+        setTotals(null);
+        applyAddressValidationState(null);
+        const baseItems = items.map((line) => ({
+          variantId: '',
+          sku: line.sku || '',
+          title: line.title || '',
+          price: '',
+          quantity: Math.max(1, Number(line.quantity || 1)),
+          bogo: false,
+          inventory_quantity: null,
+          image_url: line.image_url || '',
+          image_alt: line.image_alt || '',
+          restricted_states: [],
+          fromDraft: false,
+        }));
+        const enriched = await enrichOrderItemsFromSkus(baseItems);
+        orderItems = enriched.items.filter((item) => item.variantId);
+        if (!orderItems.length) {
+          throw new Error('No reorderable items found for this order.');
+        }
+        if (enriched.anyBogo) {
+          els.promoCode.value = 'INT999';
+        }
+        renderOrderItems();
+        updateShippingRestrictionWarning();
+        setDraftButtonState(false);
+        setActiveModule('order');
+        setStatus(els.ordersStatus, `Loaded ${orderItems.length} item(s) into cart from ${order.name || 'order'}.`, 'good');
+      } catch (err) {
+        setStatus(els.ordersStatus, err.message, 'bad');
+      }
+    });
 
     holdBtn.addEventListener('click', async () => {
       try {
@@ -1071,10 +1193,10 @@ function minimizeOrdersSection() {
 async function handleCustomerSelect(customer, allCustomers) {
   els.customerId.value = customer.id;
   renderCustomers(allCustomers, customer.id);
-  setStatus(els.customerStatus, `Selected customer ${customer.id}. Fetching addresses...`, '');
+  setStatus(els.customerStatus, `Selected customer ${customer.id}. Fetching addresses and orders...`, '');
   try {
-    const data = await apiGet(`/customer_addresses?customer_id=${encodeURIComponent(customer.id)}`);
-    lastAddresses = data.addresses || [];
+    const addressesData = await apiGet(`/customer_addresses?customer_id=${encodeURIComponent(customer.id)}`);
+    lastAddresses = addressesData.addresses || [];
     renderAddresses(lastAddresses);
     setStatus(els.customerStatus, `Selected customer ${customer.id}. Loaded ${lastAddresses.length} address(es).`, 'good');
     await fetchOrdersForCustomer(customer.id);
@@ -1264,6 +1386,7 @@ async function runCustomerSearch() {
     setStatus(els.ordersStatus, '', '');
     lastAddresses = [];
     renderAddresses(lastAddresses);
+    renderCustomerProfile(null);
     els.shipPreview.value = '';
     updateShippingRestrictionWarning();
 
@@ -1290,6 +1413,12 @@ if (els.btnSelectFirstCustomer) {
     handleCustomerSelect(lastSearchCustomers[0], lastSearchCustomers);
   });
 }
+
+document.querySelectorAll('.macro-btn').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    applyAgentMacro(btn.getAttribute('data-macro') || '');
+  });
+});
 
 els.btnNewOrder.addEventListener('click', () => {
   minimizeOrdersSection();
@@ -1346,6 +1475,7 @@ async function fetchOrdersForCustomer(customerId) {
     const data = await apiGet(`/customer_orders?customer_id=${encodeURIComponent(customerId)}`);
     lastOrders = data.orders || [];
     lastDraftOrders = data.draft_orders || [];
+    renderCustomerProfile(data.profile || null);
     renderOrders(lastOrders, lastDraftOrders);
     setStatus(els.ordersStatus, `Loaded ${lastOrders.length} order(s), ${lastDraftOrders.length} draft order(s).`, 'good');
   } catch (err) {
@@ -1404,6 +1534,7 @@ els.btnAddSku.addEventListener('click', () => {
       price: lastVariant.price,
       quantity: qty,
       bogo: Boolean(lastVariant.bogo),
+      inventory_quantity: lastVariant.inventory_quantity ?? null,
       image_url: lastVariant.image_url || '',
       image_alt: lastVariant.image_alt || '',
       restricted_states: parseRestrictedStates(lastVariant.restricted_states || ''),
@@ -1556,6 +1687,7 @@ resizeObserver.observe(document.body, { childList: true, subtree: true, attribut
 setStatus(els.apiStatus, 'Ready.', '');
 setInvoiceUrl('');
 setTotals(null);
+renderCustomerProfile(null);
 applyAddressValidationState(null);
 setDraftButtonState(false);
 setActiveModule('customer');
