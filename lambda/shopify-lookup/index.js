@@ -496,6 +496,10 @@ async function fetchCustomerOrders({ token, customerId }) {
               title
               sku
               quantity
+              image {
+                url
+                altText
+              }
               discountedTotalSet {
                 shopMoney {
                   amount
@@ -506,6 +510,12 @@ async function fetchCustomerOrders({ token, customerId }) {
                 image {
                   url
                   altText
+                }
+                product {
+                  featuredImage {
+                    url
+                    altText
+                  }
                 }
               }
                   }
@@ -604,8 +614,8 @@ async function fetchCustomerOrders({ token, customerId }) {
       })()),
       total_amount: line.discountedTotalSet?.shopMoney?.amount || null,
       currency: line.discountedTotalSet?.shopMoney?.currencyCode || null,
-      image_url: line.variant?.image?.url || null,
-      image_alt: line.variant?.image?.altText || "",
+      image_url: line.image?.url || line.variant?.image?.url || line.variant?.product?.featuredImage?.url || null,
+      image_alt: line.image?.altText || line.variant?.image?.altText || line.variant?.product?.featuredImage?.altText || "",
     })),
   }));
 
