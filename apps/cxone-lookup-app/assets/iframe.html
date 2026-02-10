@@ -86,6 +86,7 @@
       let accountSubdomain = null;
       let currentUserEmail = null;
       let latestDigits = null;
+      let latestContactId = null;
       let bridgeTimer = null;
 
       const statusEl = document.getElementById('status');
@@ -122,7 +123,7 @@
               const headers = apiKey ? { 'X-API-Key': apiKey } : undefined;
               const res = await client.request({ url, type: 'GET', dataType: 'json', cache: false, headers });
               if (res && res.phone) {
-                handleNumber(res.phone, 'bridgeUrl');
+                handleNumber(res.phone, 'bridgeUrl', res.contactId || res.contact_id);
               }
             }
           } catch (err) {
@@ -175,13 +176,14 @@
         return out;
       }
 
-      function handleNumber(raw, source) {
+      function handleNumber(raw, source, contactId) {
         const digits = (raw || '').replace(/\D+/g, '');
         if (!digits) {
           setStatus('No digits found in incoming value.', true);
           return;
         }
         latestDigits = digits;
+        latestContactId = contactId || null;
         lookupAndRender(digits, source);
       }
 
@@ -191,7 +193,7 @@
           const users = await searchUsersByPhone(digits);
           renderResult(users, digits);
           if (users.length) {
-            await setRequester(users[0]);
+            await setRequester(users[0], latestContactId);
             setStatus('Match found for ' + digits + '.');
           } else {
             setStatus('No requester match yet for ' + digits + '.', true);
@@ -253,13 +255,14 @@
         statusEl.classList.toggle('error', !!isError);
       }
 
-      async function setRequester(user) {
+      async function setRequester(user, contactId) {
         try {
           const current = await client.get('ticket.requester');
           const existing = current && current['ticket.requester'];
           const hasRequester = existing && (existing.id || existing.email);
           if (hasRequester) {
             setStatus('Requester already selected; not changing.', true);
+            await maybeSetContactId(contactId);
             return;
           }
           // Re-check just before setting to avoid races on new/unsaved tickets.
@@ -268,12 +271,39 @@
           const hasRequester2 = existing2 && (existing2.id || existing2.email);
           if (hasRequester2) {
             setStatus('Requester was selected while processing; not changing.', true);
+            await maybeSetContactId(contactId);
             return;
           }
           await client.set('ticket.requester', { id: user.id });
+          await maybeSetContactId(contactId);
         } catch (err) {
           console.warn('Failed to set requester', err);
         }
+      }
+
+      async function maybeSetContactId(contactId) {
+        if (!contactId) return;
+        const value = String(contactId);
+        const fieldId = '48798728820115';
+        const candidates = [
+          `ticket.customField:${fieldId}`,
+          `ticket.customField:custom_field_${fieldId}`
+        ];
+        for (const fieldKey of candidates) {
+          try {
+            const existing = await client.get(fieldKey);
+            const currentValue = existing && existing[fieldKey];
+            if (currentValue) return;
+            await client.set(fieldKey, value);
+            return;
+          } catch (err) {
+            const msg = String((err && (err.message || err)) || '');
+            // Field availability differs by ticket/form context; try the alternate key format.
+            if (msg.indexOf('No such ticket field') !== -1) continue;
+            console.warn('Failed to set contactId field', err);
+          }
+        }
+        console.warn('contactId field unavailable on this ticket context');
       }
 
       function escapeHtml(str) {

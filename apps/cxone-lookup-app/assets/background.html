@@ -16,6 +16,7 @@
       let settings = {};
       let currentUserEmail = null;
       let lastDigits = null;
+      let lastContactId = null;
       let bridgeTimer = null;
 
       init();
@@ -45,7 +46,7 @@
             } else {
               const headers = apiKey ? { 'X-API-Key': apiKey } : undefined;
               const res = await client.request({ url, type: 'GET', dataType: 'json', cache: false, headers });
-              if (res && res.phone) handleNumber(res.phone, 'bridgeUrl');
+              if (res && res.phone) handleNumber(res.phone, 'bridgeUrl', res.contactId || res.contact_id);
             }
           } catch (err) {
             // keep polling even on errors
@@ -142,10 +143,11 @@
         return null;
       }
 
-      function handleNumber(raw, source) {
+      function handleNumber(raw, source, contactId) {
         const digits = (raw || '').replace(/\D+/g, '');
         if (!digits || digits === lastDigits) return;
         lastDigits = digits;
+        lastContactId = contactId || null;
         lookupAndSet(digits, source);
       }
 
@@ -158,7 +160,7 @@
             return;
           }
           log('BG lookup got user', users[0].id, users[0].email);
-          await setRequesterOnTickets(users[0]);
+          await setRequesterOnTickets(users[0], lastContactId);
         } catch (err) {
           log('BG lookup/set error', err);
         }
@@ -187,7 +189,7 @@
         return [];
       }
 
-      async function setRequesterOnTickets(user) {
+      async function setRequesterOnTickets(user, contactId) {
         try {
           const instResp = await client.get('instances');
           const instances = instResp && instResp.instances ? instResp.instances : {};
@@ -210,7 +212,7 @@
                   const hasRequester = existing && (existing.id || existing.email);
                   if (hasRequester) {
                     log('BG requester already set; skip instance', key);
-                    return null;
+                    return maybeSetContactId(ic, contactId);
                   }
                   // Re-check immediately before setting to avoid races on new/unsaved tickets.
                   return ic.get('ticket.requester').then((curr2) => {
@@ -218,10 +220,10 @@
                     const hasRequester2 = existing2 && (existing2.id || existing2.email);
                     if (hasRequester2) {
                       log('BG requester now set; abort instance', key);
-                      return null;
+                      return maybeSetContactId(ic, contactId);
                     }
                     log('BG setting requester', user.id, 'on instance', key);
-                    return ic.set('ticket.requester', { id: user.id });
+                    return ic.set('ticket.requester', { id: user.id }).then(() => maybeSetContactId(ic, contactId));
                   });
                 })
                 .catch((e) => {
@@ -232,6 +234,33 @@
         } catch (err) {
           log('BG set requester error', err);
         }
+      }
+
+      async function maybeSetContactId(ic, contactId) {
+        if (!contactId) return null;
+        const value = String(contactId);
+        const fieldId = '48798728820115';
+        const candidates = [
+          `ticket.customField:${fieldId}`,
+          `ticket.customField:custom_field_${fieldId}`
+        ];
+        for (const fieldKey of candidates) {
+          try {
+            const existing = await ic.get(fieldKey);
+            const currentValue = existing && existing[fieldKey];
+            if (currentValue) return null;
+            await ic.set(fieldKey, value);
+            return null;
+          } catch (err) {
+            const msg = String((err && (err.message || err)) || '');
+            // Some ticket instances do not expose this field; try the alternate key format.
+            if (msg.indexOf('No such ticket field') !== -1) continue;
+            log('BG set contactId error', err);
+            continue;
+          }
+        }
+        log('BG contactId field unavailable on this ticket instance');
+        return null;
       }
 
       function log() {
