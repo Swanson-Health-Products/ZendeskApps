@@ -1131,6 +1131,9 @@ async function createDraftOrder({ token, input }) {
           subtotalPrice
           totalPrice
           totalTax
+          shippingAddress {
+            validationResultSummary
+          }
           lineItems(first: 50) {
             edges {
               node {
@@ -1188,6 +1191,9 @@ async function updateDraftOrder({ token, id, input }) {
           subtotalPrice
           totalPrice
           totalTax
+          shippingAddress {
+            validationResultSummary
+          }
           totalDiscountsSet {
             presentmentMoney {
               amount
@@ -1235,6 +1241,9 @@ async function fetchDraftOrder({ token, id }) {
         subtotalPrice
         totalPrice
         totalTax
+        shippingAddress {
+          validationResultSummary
+        }
         totalDiscountsSet {
           presentmentMoney {
             amount

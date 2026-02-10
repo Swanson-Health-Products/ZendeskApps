@@ -26,6 +26,9 @@ const els = {
   addressSelect: document.getElementById('addressSelect'),
   shipPreview: document.getElementById('shipPreview'),
   shipWarning: document.getElementById('shipWarning'),
+  addressValidation: document.getElementById('addressValidation'),
+  addressOverrideWrap: document.getElementById('addressOverrideWrap'),
+  addressOverride: document.getElementById('addressOverride'),
   addrName: document.getElementById('addrName'),
   addrPhone: document.getElementById('addrPhone'),
   addr1: document.getElementById('addr1'),
@@ -72,6 +75,7 @@ let autoSearchDone = false;
 let requesterEmail = '';
 let userEditedEmail = false;
 let prefillActive = true;
+let currentAddressValidation = { valid: true, requiresOverride: false, message: '' };
 const productSearchCache = new Map();
 const productSearchCacheTtlMs = 2 * 60 * 1000;
 
@@ -379,6 +383,60 @@ function updateShippingRestrictionWarning() {
   }
 }
 
+function extractAddressValidationSummary(draftOrder) {
+  return String(draftOrder?.shippingAddress?.validationResultSummary || '').trim();
+}
+
+function classifyAddressValidation(summary) {
+  const raw = String(summary || '').trim().toUpperCase();
+  if (!raw) return { valid: true, requiresOverride: false, message: '' };
+  if (raw.includes('VALID')) {
+    return { valid: true, requiresOverride: false, message: 'Address validated by Shopify.' };
+  }
+  return {
+    valid: false,
+    requiresOverride: true,
+    message: `Address validation warning: ${formatStatusLabel(raw)}`,
+  };
+}
+
+function refreshUpdateButtonState() {
+  if (!els.btnCreateDraft) return;
+  const blocked = currentAddressValidation.requiresOverride && !els.addressOverride?.checked;
+  els.btnCreateDraft.disabled = Boolean(blocked);
+}
+
+function applyAddressValidationState(draftOrder) {
+  const summary = extractAddressValidationSummary(draftOrder);
+  currentAddressValidation = classifyAddressValidation(summary);
+  if (!els.addressValidation || !els.addressOverrideWrap) return;
+
+  if (!currentAddressValidation.message) {
+    els.addressValidation.style.display = 'none';
+    els.addressValidation.textContent = '';
+    els.addressOverrideWrap.style.display = 'none';
+    if (els.addressOverride) els.addressOverride.checked = false;
+    refreshUpdateButtonState();
+    return;
+  }
+
+  els.addressValidation.style.display = 'block';
+  els.addressValidation.textContent = currentAddressValidation.message;
+  if (currentAddressValidation.valid) {
+    els.addressValidation.style.background = '#eaf8f0';
+    els.addressValidation.style.borderColor = '#9fd8b6';
+    els.addressValidation.style.color = '#135d38';
+    els.addressOverrideWrap.style.display = 'none';
+    if (els.addressOverride) els.addressOverride.checked = false;
+  } else {
+    els.addressValidation.style.background = '#fff4e5';
+    els.addressValidation.style.borderColor = '#f5c26b';
+    els.addressValidation.style.color = '#7a4b00';
+    els.addressOverrideWrap.style.display = 'block';
+  }
+  refreshUpdateButtonState();
+}
+
 function renderSkuCard(variant) {
   if (!variant) {
     els.skuCard.innerHTML = '';
@@ -627,6 +685,7 @@ function renderOrders(orders, draftOrders) {
         setInvoiceUrl(draft.invoiceUrl || order.invoice_url || '');
         setTotals(draft);
         setDraftButtonState(true);
+        applyAddressValidationState(draft);
         const lineEdges = draft.lineItems?.edges || [];
         orderItems = lineEdges.map(({ node }) => ({
           variantId: node.variant?.id || '',
@@ -1036,6 +1095,10 @@ function setTotals(draftOrder) {
 function setDraftButtonState(isUpdate) {
   if (!els.btnCreateDraft) return;
   els.btnCreateDraft.textContent = isUpdate ? 'Update Draft Order' : 'Create Draft Order';
+  if (!isUpdate && els.addressOverride) {
+    els.addressOverride.checked = false;
+  }
+  refreshUpdateButtonState();
 }
 
 function getPromoCode() {
@@ -1056,6 +1119,9 @@ function attachButtonEffects(buttons) {
 }
 
 els.addressSelect.addEventListener('change', updateAddressPreview);
+if (els.addressOverride) {
+  els.addressOverride.addEventListener('change', refreshUpdateButtonState);
+}
 if (els.email) {
   els.email.addEventListener('input', () => {
     userEditedEmail = true;
@@ -1213,6 +1279,7 @@ els.btnNewOrder.addEventListener('click', () => {
   els.draftOrderId.value = '';
   setInvoiceUrl('');
   setTotals(null);
+  applyAddressValidationState(null);
   orderItems = [];
   renderOrderItems();
   setDraftButtonState(false);
@@ -1340,6 +1407,9 @@ els.btnCreateDraft.addEventListener('click', async () => {
     const addr = lastAddresses[addrIdx];
 
     const isUpdate = Boolean(els.draftOrderId.value.trim());
+    if (isUpdate && currentAddressValidation.requiresOverride && !els.addressOverride?.checked) {
+      throw new Error('Address validation requires override to update this draft order.');
+    }
     setStatus(els.draftStatus, isUpdate ? 'Updating draft order...' : 'Creating draft order...', '');
 
     const promoCode = orderItems.some((item) => item.bogo) ? 'INT999' : getPromoCode();
@@ -1350,9 +1420,14 @@ els.btnCreateDraft.addEventListener('click', async () => {
         line_items: orderItems.map((item) => ({ variant_id: item.variantId, quantity: item.quantity })),
       };
       if (promoCode) payload.promo_code = promoCode;
+      if (addr) {
+        payload.shipping_address = addr;
+        payload.billing_same_as_shipping = true;
+      }
       const data = await apiPost('/draft_order_update', payload);
       setInvoiceUrl(data.invoice_url || '');
       setTotals(data.draft_order || null);
+      applyAddressValidationState(data.draft_order || null);
       setStatus(els.draftStatus, `Draft order ${data.draft_order?.name || ''} updated.`, 'good');
       return;
     }
@@ -1371,6 +1446,7 @@ els.btnCreateDraft.addEventListener('click', async () => {
     els.draftOrderId.value = data.draft_order?.legacyResourceId || '';
     setInvoiceUrl(data.invoice_url || '');
     setTotals(data.draft_order || null);
+    applyAddressValidationState(data.draft_order || null);
     setDraftButtonState(true);
     setStatus(els.draftStatus, `Draft order ${data.draft_order?.name || ''} created.`, 'good');
   } catch (err) {
@@ -1463,5 +1539,6 @@ resizeObserver.observe(document.body, { childList: true, subtree: true, attribut
 setStatus(els.apiStatus, 'Ready.', '');
 setInvoiceUrl('');
 setTotals(null);
+applyAddressValidationState(null);
 setDraftButtonState(false);
 setActiveModule('customer');
