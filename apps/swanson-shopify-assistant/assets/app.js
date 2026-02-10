@@ -183,9 +183,9 @@ function setStatus(el, message, type) {
 
 function formatMarketingState(value) {
   const raw = String(value || '').trim().toLowerCase();
-  if (!raw || raw === 'unknown' || raw === 'not_subscribed') return 'Not Subscribed';
+  if (!raw || raw === 'unknown' || raw === 'not_subscribed') return 'Not subscribed';
   if (raw === 'subscribed') return 'Subscribed';
-  if (raw === 'pending') return 'Pending';
+  if (raw === 'pending') return 'Pending confirmation';
   if (raw === 'unsubscribed') return 'Unsubscribed';
   return raw.replace(/\b\w/g, (c) => c.toUpperCase());
 }
@@ -299,8 +299,8 @@ function renderCustomerProfile(profile) {
     <div class="profile-item"><strong>${formatMoney(profile.lifetime_value, profile.currency)}</strong>Lifetime Value</div>
     <div class="profile-item"><strong>${profile.orders_count || 0}</strong>Total Orders</div>
     <div class="profile-item"><strong>${profile.last_order_name || '-'}</strong>Last Order</div>
-    <div class="profile-item"><strong>${formatMarketingState(profile.email_marketing_state)}</strong>Email Marketing</div>
-    <div class="profile-item"><strong>${formatMarketingState(profile.sms_marketing_state)}</strong>SMS Marketing</div>
+    <div class="profile-item"><strong>${formatMarketingState(profile.email_marketing_state)} to email</strong>Email subscription status</div>
+    <div class="profile-item"><strong>${formatMarketingState(profile.sms_marketing_state)} to SMS</strong>SMS subscription status</div>
   `;
 
   const subscriptions = Array.isArray(profile.subscriptions) ? profile.subscriptions : [];
