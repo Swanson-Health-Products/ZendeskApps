@@ -462,12 +462,25 @@ async function fetchCustomerOrders({ token, customerId }) {
               processedAt
               displayFinancialStatus
               displayFulfillmentStatus
-              fulfillments(first: 1) {
+              fulfillments(first: 10) {
+                id
                 status
                 trackingInfo {
                   number
                   url
                   company
+                }
+                fulfillmentLineItems(first: 50) {
+                  edges {
+                    node {
+                      quantity
+                      lineItem {
+                        id
+                        sku
+                        title
+                      }
+                    }
+                  }
                 }
               }
               totalPriceSet {
@@ -519,17 +532,57 @@ async function fetchCustomerOrders({ token, customerId }) {
   const customer = customerData?.data?.customer;
   const orderEdges = customer?.orders?.edges || [];
   const orders = orderEdges.map(({ node }) => ({
+    ...(function buildOrderShape() {
+      const shipments = (node.fulfillments || []).map((f) => ({
+        id: f.id || "",
+        status: f.status || null,
+        tracking: (f.trackingInfo || []).map((t) => ({
+          number: t.number || "",
+          url: t.url || "",
+          company: t.company || "",
+        })).filter((t) => t.number || t.url),
+        line_items: ((f.fulfillmentLineItems?.edges) || []).map(({ node: li }) => ({
+          line_item_id: li?.lineItem?.id || "",
+          sku: li?.lineItem?.sku || "",
+          title: li?.lineItem?.title || "",
+          quantity: Number(li?.quantity || 0),
+        })),
+      }));
+
+      const fulfilledByLine = {};
+      shipments.forEach((shipment) => {
+        shipment.line_items.forEach((line) => {
+          if (!line.line_item_id) return;
+          fulfilledByLine[line.line_item_id] = (fulfilledByLine[line.line_item_id] || 0) + (line.quantity || 0);
+        });
+      });
+
+      const trackingNumbers = [];
+      const trackingUrls = [];
+      const trackingCompanies = [];
+      shipments.forEach((shipment) => {
+        shipment.tracking.forEach((track) => {
+          if (track.number) trackingNumbers.push(track.number);
+          if (track.url) trackingUrls.push(track.url);
+          if (track.company) trackingCompanies.push(track.company);
+        });
+      });
+
+      return {
+        shipments,
+        tracking_numbers: trackingNumbers,
+        tracking_urls: trackingUrls,
+        tracking_companies: trackingCompanies,
+        latest_status: shipments[0]?.status || node.displayFulfillmentStatus || null,
+        fulfilled_by_line: fulfilledByLine,
+      };
+    })(),
     id: node.id,
     legacy_id: node.legacyResourceId,
     name: node.name,
     processed_at: node.processedAt,
     financial_status: node.displayFinancialStatus,
     fulfillment_status: node.displayFulfillmentStatus,
-    delivery_status: node.fulfillments?.[0]?.status || null,
-    tracking_numbers: (node.fulfillments?.[0]?.trackingInfo || []).map((t) => t.number).filter(Boolean),
-    tracking_urls: (node.fulfillments?.[0]?.trackingInfo || []).map((t) => t.url).filter(Boolean),
-    tracking_companies: (node.fulfillments?.[0]?.trackingInfo || []).map((t) => t.company).filter(Boolean),
-    latest_status: node.fulfillments?.[0]?.status || node.displayFulfillmentStatus || null,
     total: node.totalPriceSet?.presentmentMoney?.amount || null,
     currency: node.totalPriceSet?.presentmentMoney?.currencyCode || null,
     line_items: (node.lineItems?.edges || []).map(({ node: line }) => ({
@@ -537,6 +590,18 @@ async function fetchCustomerOrders({ token, customerId }) {
       sku: line.sku || "",
       quantity: line.quantity || 0,
       line_item_id: line.id || "",
+      fulfilled_quantity: Number((function getFulfilledQty() {
+        const lineId = line.id || "";
+        if (!lineId) return 0;
+        return (node.fulfillments || []).reduce((acc, fulfillment) => {
+          const edges = fulfillment?.fulfillmentLineItems?.edges || [];
+          const add = edges.reduce((sum, { node: fli }) => {
+            if ((fli?.lineItem?.id || "") !== lineId) return sum;
+            return sum + Number(fli?.quantity || 0);
+          }, 0);
+          return acc + add;
+        }, 0);
+      })()),
       total_amount: line.discountedTotalSet?.shopMoney?.amount || null,
       currency: line.discountedTotalSet?.shopMoney?.currencyCode || null,
       image_url: line.variant?.image?.url || null,

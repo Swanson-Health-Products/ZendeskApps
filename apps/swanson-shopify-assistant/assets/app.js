@@ -533,6 +533,32 @@ function formatMoney(amount, currency) {
   return `${currency || ''} ${amount}`.trim();
 }
 
+function formatStatusLabel(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return 'Unknown';
+  const normalized = raw.replace(/_/g, ' ').toLowerCase();
+  return normalized.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function formatFulfillmentLabel(value) {
+  const raw = String(value || '').trim().toUpperCase();
+  if (!raw) return 'Unknown';
+  if (raw === 'FULFILLED') return 'Shipped';
+  if (raw === 'PARTIALLY_FULFILLED') return 'Partially Shipped';
+  if (raw === 'UNFULFILLED') return 'Not Shipped';
+  if (raw === 'ON_HOLD') return 'On Hold';
+  return formatStatusLabel(raw);
+}
+
+function formatShipmentState(value, fallbackFulfillment) {
+  const raw = String(value || '').trim().toUpperCase();
+  if (raw === 'SUCCESS') return 'Shipped';
+  if (raw === 'OPEN') return 'In Progress';
+  if (raw === 'CANCELLED') return 'Canceled';
+  if (raw === 'ERROR' || raw === 'FAILURE') return 'Issue';
+  return formatFulfillmentLabel(fallbackFulfillment);
+}
+
 function renderOrders(orders, draftOrders) {
   els.ordersList.innerHTML = '';
   const hasOrders = orders.length || draftOrders.length;
@@ -671,15 +697,15 @@ function renderOrders(orders, draftOrders) {
     const card = document.createElement('div');
     card.className = 'order-card';
     const items = order.line_items || [];
+    const shipmentStatus = formatFulfillmentLabel(order.fulfillment_status || '');
+    const paymentStatus = formatStatusLabel(order.financial_status || '');
     card.innerHTML = `
       <div class="order-header">
         <div>
           <strong>${order.name || 'Order'}</strong>
           <div class="order-meta">
-            <span class="pill">Shipping: ${order.fulfillment_status || 'UNKNOWN'}</span>
-            ${order.delivery_status ? `<span class="pill">Delivery: ${order.delivery_status}</span>` : ''}
-            ${order.latest_status ? `<span class="pill">Latest: ${order.latest_status}</span>` : ''}
-            <span class="pill">Payment: ${order.financial_status || 'UNKNOWN'}</span>
+            <span class="pill">Shipping: ${shipmentStatus}</span>
+            <span class="pill">Payment: ${paymentStatus}</span>
             <span class="pill">${formatMoney(order.total, order.currency)}</span>
           </div>
         </div>
@@ -696,10 +722,42 @@ function renderOrders(orders, draftOrders) {
     const list = card.querySelector('.order-items');
     items.forEach((item) => {
       const li = document.createElement('li');
-      li.textContent = `${item.sku || ''} - ${item.title || ''} - Qty ${item.quantity || 0}`;
+      const fulfilledQty = Number(item.fulfilled_quantity || 0);
+      const totalQty = Number(item.quantity || 0);
+      const fulfillmentText = totalQty > 0
+        ? `Fulfilled ${Math.min(fulfilledQty, totalQty)}/${totalQty}`
+        : 'Fulfillment unknown';
+      li.textContent = `${item.sku || ''} - ${item.title || ''} - Qty ${totalQty} (${fulfillmentText})`;
       list.appendChild(li);
     });
-    if (order.tracking_numbers && order.tracking_numbers.length) {
+    if (Array.isArray(order.shipments) && order.shipments.length) {
+      order.shipments.forEach((shipment, shipmentIdx) => {
+        const shipmentLabel = document.createElement('li');
+        shipmentLabel.innerHTML = `<strong>Shipment ${shipmentIdx + 1}: ${formatShipmentState(shipment.status, order.fulfillment_status)}</strong>`;
+        list.appendChild(shipmentLabel);
+
+        const tracking = Array.isArray(shipment.tracking) ? shipment.tracking : [];
+        tracking.forEach((track) => {
+          const company = track.company || 'Carrier';
+          const number = track.number || '';
+          const url = track.url || '';
+          const li = document.createElement('li');
+          if (url) {
+            li.innerHTML = `Tracking: ${company} ${number} - <a href="${url}" target="_blank" rel="noopener">${url}</a>`;
+          } else {
+            li.textContent = `Tracking: ${company} ${number}`.trim();
+          }
+          list.appendChild(li);
+        });
+
+        const shipmentItems = Array.isArray(shipment.line_items) ? shipment.line_items : [];
+        shipmentItems.forEach((line) => {
+          const li = document.createElement('li');
+          li.textContent = `Fulfilled in shipment: ${line.sku || ''} - ${line.title || ''} - Qty ${line.quantity || 0}`;
+          list.appendChild(li);
+        });
+      });
+    } else if (order.tracking_numbers && order.tracking_numbers.length) {
       order.tracking_numbers.forEach((number, idx) => {
         const company = (order.tracking_companies || [])[idx] || 'Carrier';
         const url = (order.tracking_urls || [])[idx] || '';
@@ -711,6 +769,10 @@ function renderOrders(orders, draftOrders) {
         }
         list.appendChild(li);
       });
+    } else if (String(order.fulfillment_status || '').toUpperCase() === 'FULFILLED') {
+      const li = document.createElement('li');
+      li.textContent = 'Shipped (no tracking details posted).';
+      list.appendChild(li);
     }
 
     const header = card.querySelector('.order-header');
