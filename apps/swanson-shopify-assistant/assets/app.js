@@ -695,10 +695,11 @@ function renderOrders(orders, draftOrders) {
 
   orders.forEach((order) => {
     const card = document.createElement('div');
-    card.className = 'order-card';
+    card.className = 'order-card order-item-card';
     const items = order.line_items || [];
     const shipmentStatus = formatFulfillmentLabel(order.fulfillment_status || '');
     const paymentStatus = formatStatusLabel(order.financial_status || '');
+    const processed = order.processed_at ? new Date(order.processed_at).toLocaleString() : '';
     card.innerHTML = `
       <div class="order-header">
         <div>
@@ -707,9 +708,11 @@ function renderOrders(orders, draftOrders) {
             <span class="pill">Shipping: ${shipmentStatus}</span>
             <span class="pill">Payment: ${paymentStatus}</span>
             <span class="pill">${formatMoney(order.total, order.currency)}</span>
+            ${processed ? `<span class="pill">Placed: ${processed}</span>` : ''}
+            ${order.legacy_id ? `<span class="pill">Order #: ${order.legacy_id}</span>` : ''}
           </div>
         </div>
-        <div class="pill">Order</div>
+        <div class="pill">Order · Click to expand</div>
       </div>
       <ul class="order-items" style="display:none;"></ul>
       <div class="order-actions">
@@ -777,11 +780,13 @@ function renderOrders(orders, draftOrders) {
 
     const header = card.querySelector('.order-header');
     header.addEventListener('click', () => {
-      list.style.display = list.style.display === 'none' ? 'block' : 'none';
-      const fulfillment = String(order.fulfillment_status || '').toUpperCase();
-      if (fulfillment === 'FULFILLED' || fulfillment === 'PARTIALLY_FULFILLED') {
-        minimizeOrdersSection();
+      const isOpening = list.style.display === 'none';
+      if (isOpening) {
+        document.querySelectorAll('.order-item-card .order-items').forEach((other) => {
+          if (other !== list) other.style.display = 'none';
+        });
       }
+      list.style.display = isOpening ? 'block' : 'none';
     });
 
     const refundPanel = document.createElement('div');
