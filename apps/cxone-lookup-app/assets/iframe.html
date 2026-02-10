@@ -146,7 +146,7 @@
       }
 
       async function getTicketCreatedAt() {
-        const fields = ['ticket.createdAt', 'ticket.created_at'];
+        const fields = ['ticket.createdAt'];
         for (const field of fields) {
           try {
             const resp = await client.get(field);
@@ -285,10 +285,7 @@
         if (!contactId) return;
         const value = String(contactId);
         const fieldId = '48798728820115';
-        const candidates = [
-          `ticket.customField:${fieldId}`,
-          `ticket.customField:custom_field_${fieldId}`
-        ];
+        const candidates = [`ticket.customField:custom_field_${fieldId}`];
         for (const fieldKey of candidates) {
           try {
             const existing = await client.get(fieldKey);

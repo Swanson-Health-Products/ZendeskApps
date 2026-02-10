@@ -132,7 +132,7 @@
       }
 
       async function getTicketCreatedAt(ic) {
-        const fields = ['ticket.createdAt', 'ticket.created_at'];
+        const fields = ['ticket.createdAt'];
         for (const field of fields) {
           try {
             const resp = await ic.get(field);
@@ -160,7 +160,8 @@
             return;
           }
           log('BG lookup got user', users[0].id, users[0].email);
-          await setRequesterOnTickets(users[0], lastContactId);
+          // Background is orchestration-only; ticket mutations are handled by the active iframe instance.
+          log('BG resolved caller data', { digits, contactId: lastContactId, userId: users[0].id });
         } catch (err) {
           log('BG lookup/set error', err);
         }
@@ -187,80 +188,6 @@
           if (unique.length) return unique;
         }
         return [];
-      }
-
-      async function setRequesterOnTickets(user, contactId) {
-        try {
-          const instResp = await client.get('instances');
-          const instances = instResp && instResp.instances ? instResp.instances : {};
-          const entries = Object.keys(instances).map((key) => ({ key, meta: instances[key] || {} }));
-          const ticketInst = entries.filter(({ meta }) => {
-            const loc = (meta.location || '').toLowerCase();
-            return loc.includes('ticket_sidebar') || loc.includes('new_ticket_sidebar');
-          });
-          if (!ticketInst.length) {
-            log('BG no ticket instances open; skipping requester set');
-            return;
-          }
-          await Promise.all(
-            ticketInst.map(({ key }) => {
-              const ic = client.instance(key);
-              return ic
-                .get('ticket.requester')
-                .then((curr) => {
-                  const existing = curr && curr['ticket.requester'];
-                  const hasRequester = existing && (existing.id || existing.email);
-                  if (hasRequester) {
-                    log('BG requester already set; skip instance', key);
-                    return maybeSetContactId(ic, contactId);
-                  }
-                  // Re-check immediately before setting to avoid races on new/unsaved tickets.
-                  return ic.get('ticket.requester').then((curr2) => {
-                    const existing2 = curr2 && curr2['ticket.requester'];
-                    const hasRequester2 = existing2 && (existing2.id || existing2.email);
-                    if (hasRequester2) {
-                      log('BG requester now set; abort instance', key);
-                      return maybeSetContactId(ic, contactId);
-                    }
-                    log('BG setting requester', user.id, 'on instance', key);
-                    return ic.set('ticket.requester', { id: user.id }).then(() => maybeSetContactId(ic, contactId));
-                  });
-                })
-                .catch((e) => {
-                  log('BG get/set requester error', e);
-                });
-            })
-          );
-        } catch (err) {
-          log('BG set requester error', err);
-        }
-      }
-
-      async function maybeSetContactId(ic, contactId) {
-        if (!contactId) return null;
-        const value = String(contactId);
-        const fieldId = '48798728820115';
-        const candidates = [
-          `ticket.customField:${fieldId}`,
-          `ticket.customField:custom_field_${fieldId}`
-        ];
-        for (const fieldKey of candidates) {
-          try {
-            const existing = await ic.get(fieldKey);
-            const currentValue = existing && existing[fieldKey];
-            if (currentValue) return null;
-            await ic.set(fieldKey, value);
-            return null;
-          } catch (err) {
-            const msg = String((err && (err.message || err)) || '');
-            // Some ticket instances do not expose this field; try the alternate key format.
-            if (msg.indexOf('No such ticket field') !== -1) continue;
-            log('BG set contactId error', err);
-            continue;
-          }
-        }
-        log('BG contactId field unavailable on this ticket instance');
-        return null;
       }
 
       function log() {
