@@ -159,6 +159,18 @@ function normalizePhoneToEmail(phone) {
   return `${digits}@hcbl.com`;
 }
 
+function isValidEmailAddress(email) {
+  const value = String(email || '').trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+}
+
+function normalizeUsPhoneForCustomer(phone) {
+  const digits = String(phone || '').replace(/\D/g, '');
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
+  return '';
+}
+
 function setStatus(el, message, type) {
   el.textContent = message || '';
   el.className = type ? `status ${type}` : 'status';
@@ -1168,11 +1180,15 @@ els.btnNoEmail.addEventListener('click', () => {
 els.btnCreateCustomer.addEventListener('click', async () => {
   try {
     const name = els.newCustomerName.value.trim();
-    const phone = els.newCustomerPhone.value.trim();
-    const email = els.newCustomerEmail.value.trim();
+    const rawPhone = els.newCustomerPhone.value.trim();
+    const rawEmail = els.newCustomerEmail.value.trim();
+    const phone = normalizeUsPhoneForCustomer(rawPhone);
+    const email = rawEmail.toLowerCase();
     if (!name) throw new Error('Customer name required');
-    if (!phone) throw new Error('Phone required');
-    if (!email) throw new Error('Email required');
+    if (!rawPhone) throw new Error('Phone required');
+    if (!phone) throw new Error('Phone must be a valid US 10-digit number (or 11 digits starting with 1).');
+    if (!rawEmail) throw new Error('Email required');
+    if (!isValidEmailAddress(email)) throw new Error('Email must be a valid format (example@domain.com).');
     setStatus(els.newCustomerStatus, 'Creating customer...', '');
     const payload = { name, phone, email };
     const data = await apiPost('/customer_create', payload);
@@ -1189,7 +1205,8 @@ els.btnCreateCustomer.addEventListener('click', async () => {
     if (phoneErrors.some((e) => String(e).includes('has already been taken'))) {
       try {
         setStatus(els.newCustomerStatus, 'Phone already exists. Searching existing customer...', 'bad');
-        const params = new URLSearchParams({ phone: els.newCustomerPhone.value.trim(), limit: '5' });
+        const dedupePhone = normalizeUsPhoneForCustomer(els.newCustomerPhone.value.trim()) || els.newCustomerPhone.value.trim();
+        const params = new URLSearchParams({ phone: dedupePhone, limit: '5' });
         const data = await apiGet(`/search?${params.toString()}`);
         renderCustomers(data.customers || []);
         setStatus(els.newCustomerStatus, 'Found existing customer with this phone. Click to select.', 'good');
