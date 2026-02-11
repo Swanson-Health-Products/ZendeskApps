@@ -1,0 +1,496 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Shopify Draft Order Demo</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --panel: #f8fafc;
+      --border: #d8e0ea;
+      --text: #1b2430;
+      --muted: #5b6b80;
+      --accent: #1e73e8;
+      --good: #128a4a;
+      --bad: #b42318;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header {
+      padding: 24px 28px 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    h1 { margin: 0 0 6px; font-size: 22px; }
+    p { margin: 0; color: var(--muted); }
+    main { padding: 20px 28px 32px; display: grid; gap: 16px; }
+    .module { display: none; }
+    .module.active { display: block; }
+    .module-nav {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+    .module-nav button {
+      background: #e6edf5;
+      color: #1b2430;
+    }
+    .module-nav button.active {
+      background: #33461c;
+      color: #ffffff;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      box-shadow: 0 6px 14px rgba(9, 30, 66, .08);
+    }
+    .grid {
+      display: grid;
+      gap: 12px;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+    label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    input, select, textarea {
+      width: 100%;
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: #ffffff;
+      color: var(--text);
+      font-size: 14px;
+    }
+    input[readonly] { color: var(--muted); }
+    button {
+      width: auto;
+      min-width: 0;
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: none;
+      background: #33461c;
+      cursor: pointer;
+      font-weight: 600;
+      color: white;
+      font-size: 14px;
+    }
+    button.primary-update {
+      background: #57a345;
+    }
+    button.secondary {
+      background: #33461c;
+      border: none;
+      font-weight: 600;
+      color: #ffffff;
+    }
+    button:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-compact {
+      width: auto;
+      min-width: 0;
+      padding: 6px 10px;
+    }
+    .btn-compact:hover {
+      background: #2a3a16;
+      box-shadow: 0 2px 6px rgba(0,0,0,.2);
+    }
+    .btn-compact.clicked {
+      transform: translateY(1px);
+      box-shadow: inset 0 1px 2px rgba(0,0,0,.2);
+      background: #1f2a11;
+    }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; }
+    .row > * { flex: 0 0 auto; }
+    .status { font-size: 13px; color: var(--muted); }
+    .status.good { color: var(--good); }
+    .status.bad { color: var(--bad); }
+    .list { margin: 0; padding: 0; list-style: none; }
+    .list li { padding: 8px 0; border-bottom: 1px dashed var(--border); }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+    .sku-card {
+      display: grid;
+      grid-template-columns: 64px 1fr;
+      gap: 10px;
+      align-items: center;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px;
+      background: #fff;
+    }
+    .sku-card img {
+      width: 64px;
+      height: 64px;
+      object-fit: cover;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+    }
+    th, td {
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      padding: 8px 6px;
+      font-size: 13px;
+    }
+    th { color: var(--muted); font-weight: 600; }
+    .qty-input { max-width: 80px; }
+    .invoice-link {
+      display: inline-block;
+      margin-top: 6px;
+      font-size: 13px;
+      color: var(--accent);
+    }
+    .order-card {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px;
+      background: #fff;
+      margin-top: 10px;
+    }
+    .order-card.is-hover {
+      border-color: #33461c;
+      box-shadow: 0 6px 16px rgba(51, 70, 28, 0.15);
+      background: #f2f7ed;
+    }
+    .order-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      cursor: pointer;
+    }
+    .order-meta {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .order-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 8px;
+      justify-content: flex-end;
+    }
+    .order-actions button {
+      width: auto;
+      min-width: 0;
+      padding: 4px 8px;
+      font-size: 12px;
+    }
+    .order-actions button:hover {
+      background: #2a3a16;
+      box-shadow: 0 2px 6px rgba(0,0,0,.2);
+    }
+    .order-actions button.clicked {
+      transform: translateY(1px);
+      box-shadow: inset 0 1px 2px rgba(0,0,0,.2);
+      background: #1f2a11;
+    }
+    .draft-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      margin-top: 10px;
+    }
+    .draft-actions .left {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .draft-actions .right {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .order-actions .invoice-link {
+      font-size: 12px;
+      align-self: center;
+    }
+    .order-items {
+      margin-top: 8px;
+      padding-left: 16px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .order-items li {
+      margin-bottom: 6px;
+    }
+    .warning {
+      background: #fff4e5;
+      border: 1px solid #f5c26b;
+      color: #7a4b00;
+      padding: 8px 10px;
+      border-radius: 8px;
+      font-size: 13px;
+      margin-top: 10px;
+    }
+    .totals {
+      margin-top: 12px;
+      display: grid;
+      gap: 6px;
+      grid-template-columns: repeat(3, minmax(140px, 1fr));
+    }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Shopify Draft Order Demo</h1>
+    <p>Standalone tester for customer lookup, SKU lookup, draft order create, and quantity update.</p>
+  </header>
+
+  <main>
+    <section class="panel">
+      <div class="module-nav">
+        <button id="navCustomer" class="btn-compact">Customer</button>
+        <button id="navOrders" class="btn-compact">Orders</button>
+        <button id="navOrder" class="btn-compact">Cart</button>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h3>API Settings</h3>
+      <div class="grid">
+        <div>
+          <label>API Base URL</label>
+          <input id="apiBase" value="https://rvkg901wy9.execute-api.us-east-1.amazonaws.com/prod" />
+        </div>
+        <div>
+          <label>API Key</label>
+          <input id="apiKey" placeholder="x-api-key" />
+        </div>
+      </div>
+      <div class="status" id="apiStatus"></div>
+    </section>
+
+    <section class="panel module active" data-step="customer">
+      <h3>1) Customer Lookup</h3>
+      <div class="grid">
+        <div>
+          <label>First name</label>
+          <input id="firstName" value="Kevin" />
+        </div>
+        <div>
+          <label>Last name</label>
+          <input id="lastName" value="Wolf" />
+        </div>
+        <div>
+          <label>Email</label>
+          <input id="email" placeholder="name@example.com" />
+        </div>
+        <div>
+          <label>Phone</label>
+          <input id="phone" placeholder="5551234567" />
+        </div>
+        <div>
+          <label>Tags (comma separated)</label>
+          <input id="tags" placeholder="vip, test" />
+        </div>
+        <div>
+          <label>Swanson Customer ID</label>
+          <input id="swansonId" placeholder="12345" />
+        </div>
+        <div>
+          <label>Customer ID (manual override)</label>
+          <input id="customerId" value="8719271297162" />
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <button id="btnSearchCustomer" class="btn-compact">Search</button>
+        <button id="btnNewCustomer" class="btn-compact secondary">New Customer</button>
+      </div>
+      <div class="status" id="customerStatus"></div>
+      <ul class="list" id="customerResults"></ul>
+      <div class="row" style="margin-top:8px;">
+        <button id="btnSelectFirstCustomer" class="btn-compact secondary" style="display:none;">Select First Result</button>
+      </div>
+
+      <details id="newCustomerPanel" style="margin-top:12px;">
+        <summary style="cursor:pointer; font-weight:600;">Create New Customer</summary>
+        <div class="grid" style="margin-top:10px;">
+          <div>
+            <label>Customer name</label>
+            <input id="newCustomerName" placeholder="First Last" />
+          </div>
+          <div>
+            <label>Phone</label>
+            <input id="newCustomerPhone" placeholder="5551234567" />
+          </div>
+          <div>
+            <label>Email</label>
+            <div class="row" style="margin-top:6px;">
+              <input id="newCustomerEmail" placeholder="name@example.com" />
+              <button id="btnNoEmail" class="btn-compact secondary">No Email</button>
+            </div>
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px;">
+          <button id="btnCreateCustomer" class="btn-compact primary-update">Create Customer</button>
+        </div>
+        <div class="status" id="newCustomerStatus"></div>
+      </details>
+
+      <div style="margin-top:12px;" class="grid">
+        <div>
+          <label>Saved Addresses</label>
+          <select id="addressSelect"></select>
+        </div>
+        <div>
+          <label>Ship To (preview)</label>
+          <textarea id="shipPreview" rows="3" readonly></textarea>
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <button id="btnCustomerNext" class="btn-compact">Next: Orders</button>
+      </div>
+      <details style="margin-top:12px;">
+        <summary style="cursor:pointer; font-weight:600;">Add New Address</summary>
+        <div class="grid">
+          <div>
+            <label>Name</label>
+            <input id="addrName" />
+          </div>
+          <div>
+            <label>Phone</label>
+            <input id="addrPhone" />
+          </div>
+          <div>
+            <label>Address 1</label>
+            <input id="addr1" />
+          </div>
+          <div>
+            <label>Address 2</label>
+            <input id="addr2" />
+          </div>
+          <div>
+            <label>City</label>
+            <input id="addrCity" />
+          </div>
+          <div>
+            <label>Province/State</label>
+            <input id="addrProvince" />
+          </div>
+          <div>
+            <label>Postal Code</label>
+            <input id="addrZip" />
+          </div>
+          <div>
+            <label>Country</label>
+            <input id="addrCountry" value="United States" />
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px;">
+          <button class="secondary" id="btnAddAddress">Add Address</button>
+          <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
+            <input type="checkbox" id="addrDefault" />
+            Set as default
+          </label>
+        </div>
+        <div class="status" id="addrStatus"></div>
+      </details>
+    </section>
+
+    <section class="panel module" data-step="orders">
+      <h3>1b) Recent Orders & Draft Orders</h3>
+      <div class="row" style="margin-top:10px;">
+        <button id="btnNewOrder" class="btn-compact">New Order</button>
+      </div>
+      <div class="status" id="ordersStatus"></div>
+      <div id="ordersList"></div>
+    </section>
+
+    <section class="panel module" data-step="order">
+      <h3>Order Builder</h3>
+      <div class="grid">
+        <div>
+          <label>SKU</label>
+          <input id="sku" value="SW1864" />
+        </div>
+        <div>
+          <label>Quantity</label>
+          <input id="skuQty" value="1" />
+        </div>
+        <div>
+          <label>Price</label>
+          <input id="variantPrice" readonly />
+        </div>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <button id="btnLookupSku">Lookup SKU</button>
+        <button class="secondary" id="btnAddSku">Add To Order</button>
+      </div>
+      <div class="status" id="skuStatus"></div>
+      <div id="skuCard"></div>
+
+      <div style="margin-top:16px;"></div>
+      <h3>Draft Order</h3>
+      <input id="draftOrderId" type="hidden" />
+      <table>
+        <thead>
+          <tr>
+            <th>Image</th>
+            <th>SKU</th>
+            <th>Title</th>
+            <th>Price</th>
+            <th>Qty</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="orderItems"></tbody>
+      </table>
+
+      <div style="margin-top:12px;" class="grid">
+        <div>
+          <label>Promo Code</label>
+          <input id="promoCode" placeholder="e.g. SAVE50" />
+        </div>
+      </div>
+
+      <div class="totals">
+        <div>
+          <label>Subtotal</label>
+          <input id="subtotal" readonly />
+        </div>
+        <div>
+          <label>Tax</label>
+          <input id="totalTax" readonly />
+        </div>
+        <div>
+          <label>Total</label>
+          <input id="total" readonly />
+        </div>
+      </div>
+
+      <div class="draft-actions">
+        <div class="left">
+          <button id="btnCreateDraft" class="primary-update">Create Draft Order</button>
+        </div>
+        <div class="right">
+          <label style="font-size:12px; color: var(--muted);">Invoice URL</label>
+          <input id="invoiceUrl" readonly style="max-width: 360px;" />
+          <a id="invoiceLink" class="invoice-link" target="_blank" rel="noopener"></a>
+        </div>
+      </div>
+      <div id="shipWarning" class="warning" style="display:none;"></div>
+      <div class="status" id="draftStatus"></div>
+    </section>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>
