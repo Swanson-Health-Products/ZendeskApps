@@ -58,6 +58,7 @@ const els = {
   promoCode: document.getElementById('promoCode'),
   shippingSpeed: document.getElementById('shippingSpeed'),
   shippingCost: document.getElementById('shippingCost'),
+  freeShipping: document.getElementById('freeShipping'),
   subtotal: document.getElementById('subtotal'),
   totalTax: document.getElementById('totalTax'),
   total: document.getElementById('total'),
@@ -83,12 +84,19 @@ let userEditedEmail = false;
 let prefillActive = true;
 let currentAddressValidation = { valid: true, requiresOverride: false, message: '' };
 let lastCustomerProfile = null;
+let syncingShippingUi = false;
 const productSearchCache = new Map();
 const productSearchCacheTtlMs = 2 * 60 * 1000;
 
 const client = ZAFClient.init();
 let settings = {};
 const DEFAULT_API_BASE_URL = 'https://rvkg901wy9.execute-api.us-east-1.amazonaws.com/prod';
+const SHIPPING_RATE_BY_SPEED = {
+  'Standard Shipping': 6.99,
+  'Expedited Shipping': 12.99,
+  '2-Day Shipping': 19.99,
+  'Overnight Shipping': 29.99,
+};
 
 const US_STATE_MAP = {
   "ALABAMA": "AL",
@@ -624,6 +632,7 @@ function renderOrderItems() {
     qtyInput.addEventListener('change', () => {
       const val = Math.max(1, Number(qtyInput.value || 1));
       item.quantity = val;
+      updateShippingCostDisplay();
     });
     const removeBtn = tr.querySelector('button');
     removeBtn.addEventListener('click', () => {
@@ -642,6 +651,7 @@ function renderOrderItems() {
     }
     els.orderItems.appendChild(tr);
   });
+  updateShippingCostDisplay();
 }
 
 async function enrichOrderItemsFromSkus(items) {
@@ -1230,19 +1240,49 @@ function setTotals(draftOrder) {
 }
 
 function setShippingLineFromDraft(draftOrder) {
-  if (!els.shippingSpeed || !els.shippingCost) return;
+  if (!els.shippingSpeed || !els.shippingCost || !els.freeShipping) return;
+  syncingShippingUi = true;
   const shippingLine = draftOrder?.shippingLine || null;
   if (!draftOrder) {
     els.shippingSpeed.value = '';
     els.shippingCost.value = '';
+    els.freeShipping.checked = false;
+    syncingShippingUi = false;
     return;
   }
-  if (!shippingLine) return;
+  if (!shippingLine) {
+    els.freeShipping.checked = false;
+    syncingShippingUi = false;
+    updateShippingCostDisplay();
+    return;
+  }
   els.shippingSpeed.value = shippingLine.title || '';
   const amount = shippingLine.originalPriceSet?.presentmentMoney?.amount
     || shippingLine.discountedPriceSet?.presentmentMoney?.amount
     || '';
   els.shippingCost.value = amount || '';
+  const numeric = Number(amount || 0);
+  els.freeShipping.checked = Number.isFinite(numeric) && numeric === 0;
+  syncingShippingUi = false;
+}
+
+function calculateShippingAmount() {
+  if (els.freeShipping?.checked) return 0;
+  const speed = String(els.shippingSpeed?.value || '').trim();
+  if (!speed) return null;
+  const rate = SHIPPING_RATE_BY_SPEED[speed];
+  if (!Number.isFinite(rate)) return null;
+  return rate;
+}
+
+function updateShippingCostDisplay() {
+  if (!els.shippingCost) return;
+  const amount = calculateShippingAmount();
+  if (amount === null) {
+    els.shippingCost.value = '';
+    return;
+  }
+  els.shippingCost.value = Number(amount).toFixed(2);
 }
 
 function setDraftButtonState(isUpdate) {
@@ -1260,17 +1300,14 @@ function getPromoCode() {
 }
 
 function getShippingLineInput() {
+  updateShippingCostDisplay();
   const speed = String(els.shippingSpeed?.value || '').trim();
-  const rawCost = String(els.shippingCost?.value || '').trim();
-  if (!speed && !rawCost) return null;
-
-  const amount = rawCost === '' ? 0 : Number(rawCost);
-  if (!Number.isFinite(amount) || amount < 0) {
-    throw new Error('Shipping Cost must be a valid non-negative number.');
-  }
+  const amount = calculateShippingAmount();
+  if (amount === null) return null;
+  if (!speed && !els.freeShipping?.checked) return null;
 
   return {
-    title: speed || 'Shipping',
+    title: speed || 'Free Shipping',
     amount: amount.toFixed(2),
     currency_code: 'USD',
   };
@@ -1296,6 +1333,17 @@ if (els.email) {
   els.email.addEventListener('input', () => {
     userEditedEmail = true;
   });
+}
+if (els.shippingSpeed) {
+  els.shippingSpeed.addEventListener('change', () => {
+    if (!syncingShippingUi && String(els.shippingSpeed.value || '').trim() && els.freeShipping?.checked) {
+      els.freeShipping.checked = false;
+    }
+    updateShippingCostDisplay();
+  });
+}
+if (els.freeShipping) {
+  els.freeShipping.addEventListener('change', updateShippingCostDisplay);
 }
 
 attachButtonEffects([
@@ -1730,6 +1778,8 @@ setStatus(els.apiStatus, 'Ready.', '');
 setInvoiceUrl('');
 setTotals(null);
 setShippingLineFromDraft(null);
+if (els.freeShipping) els.freeShipping.checked = false;
+updateShippingCostDisplay();
 renderCustomerProfile(null);
 applyAddressValidationState(null);
 setDraftButtonState(false);
