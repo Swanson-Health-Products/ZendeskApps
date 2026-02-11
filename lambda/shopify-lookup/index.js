@@ -179,6 +179,97 @@ async function fetchCustomersRest({ token, query, limit }) {
   };
 }
 
+async function fetchCustomerProfile({ token, customerId }) {
+  const legacyId = toCustomerLegacyId(customerId);
+  if (!legacyId) {
+    return { error: { status: 400, body: "customer_id must be a Shopify customer id or gid" } };
+  }
+
+  const customerPath = `/admin/api/${API_VERSION}/customers/${legacyId}.json`;
+  const customerResp = await httpsRequestWithRedirect({
+    method: "GET",
+    hostname: `${STORE}.myshopify.com`,
+    path: customerPath,
+    headers: {
+      "X-Shopify-Access-Token": token,
+      "Accept": "application/json",
+    },
+  });
+  if (customerResp.status < 200 || customerResp.status >= 300) {
+    return { error: { status: customerResp.status, body: customerResp.body } };
+  }
+
+  const customerPayload = JSON.parse(customerResp.body || "{}");
+  const customer = customerPayload.customer || {};
+
+  const orderPath = `/admin/api/${API_VERSION}/customers/${legacyId}/orders.json?status=any&limit=50&fields=id,name,created_at,processed_at,total_price,currency,line_items`;
+  const orderResp = await httpsRequestWithRedirect({
+    method: "GET",
+    hostname: `${STORE}.myshopify.com`,
+    path: orderPath,
+    headers: {
+      "X-Shopify-Access-Token": token,
+      "Accept": "application/json",
+    },
+  });
+  if (orderResp.status < 200 || orderResp.status >= 300) {
+    return { error: { status: orderResp.status, body: orderResp.body } };
+  }
+
+  const ordersPayload = JSON.parse(orderResp.body || "{}");
+  const orders = Array.isArray(ordersPayload.orders) ? ordersPayload.orders : [];
+
+  const subMap = new Map();
+  orders.forEach((order) => {
+    const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
+    lineItems.forEach((line) => {
+      const planName = line?.selling_plan_allocation?.selling_plan?.name || line?.selling_plan_name || "";
+      if (!planName) return;
+      const sku = String(line.sku || "").trim();
+      const key = `${sku}::${planName}`;
+      if (!subMap.has(key)) {
+        subMap.set(key, {
+          sku,
+          title: line.title || "",
+          selling_plan: planName,
+          quantity: Number(line.quantity || 0),
+          last_order_at: order.processed_at || order.created_at || null,
+        });
+      } else {
+        const current = subMap.get(key);
+        current.quantity += Number(line.quantity || 0);
+        if (!current.last_order_at || (order.processed_at && order.processed_at > current.last_order_at)) {
+          current.last_order_at = order.processed_at || order.created_at || current.last_order_at;
+        }
+      }
+    });
+  });
+
+  const subscriptions = Array.from(subMap.values())
+    .sort((a, b) => String(b.last_order_at || "").localeCompare(String(a.last_order_at || "")))
+    .slice(0, 15);
+
+  const recentOrder = orders[0] || null;
+  const profile = {
+    id: customer.id || Number(legacyId),
+    first_name: customer.first_name || "",
+    last_name: customer.last_name || "",
+    email: customer.email || "",
+    phone: customer.phone || "",
+    orders_count: Number(customer.orders_count || orders.length || 0),
+    lifetime_value: customer.total_spent || "0.00",
+    currency: customer.currency || recentOrder?.currency || "USD",
+    last_order_at: recentOrder?.processed_at || recentOrder?.created_at || null,
+    last_order_name: recentOrder?.name || "",
+    email_marketing_state: customer.email_marketing_consent?.state || "unknown",
+    sms_marketing_state: customer.sms_marketing_consent?.state || "unknown",
+    accepts_marketing: Boolean(customer.accepts_marketing),
+    subscriptions,
+  };
+
+  return { profile };
+}
+
 async function fetchDiscountByCode({ token, code }) {
   const path = `/admin/api/${API_VERSION}/discount_codes/lookup.json?code=${encodeURIComponent(code)}`;
   const { status, body } = await httpsRequestWithRedirect({
@@ -690,7 +781,12 @@ async function fetchCustomerOrders({ token, customerId }) {
     })),
   }));
 
-  return { orders, draft_orders: draftOrders };
+  const profileResult = await fetchCustomerProfile({ token, customerId });
+  return {
+    orders,
+    draft_orders: draftOrders,
+    profile: profileResult.error ? null : (profileResult.profile || null),
+  };
 }
 
 async function createCustomerAddress({ token, customerId, address, setDefault }) {
@@ -1682,6 +1778,30 @@ function normalizeAddressInput(input) {
   return Object.fromEntries(Object.entries(address).filter(([, value]) => value !== undefined && value !== null && value !== ""));
 }
 
+function normalizeShippingLineInput(input) {
+  if (!input || typeof input !== "object") return null;
+  const title = String(input.title || input.speed || "").trim();
+  const rawAmount = input.amount ?? input.cost ?? input.price;
+  const amountNum = rawAmount === undefined || rawAmount === null || rawAmount === ""
+    ? null
+    : Number(rawAmount);
+
+  if (!title && amountNum === null) return null;
+  if (amountNum !== null && (!Number.isFinite(amountNum) || amountNum < 0)) return null;
+
+  const currency = String(
+    input.currency_code || input.currencyCode || input.currency || "USD"
+  ).trim().toUpperCase();
+
+  return {
+    title: title || "Shipping",
+    priceWithCurrency: {
+      amount: (amountNum === null ? 0 : amountNum).toFixed(2),
+      currencyCode: currency || "USD",
+    },
+  };
+}
+
 exports.handler = async (event) => {
   try {
     if (!STORE) return respond(500, { error: "Missing SHOPIFY_STORE" });
@@ -1784,9 +1904,11 @@ exports.handler = async (event) => {
 
       const shippingAddress = normalizeAddressInput(body.shipping_address || body.shippingAddress);
       const billingAddress = normalizeAddressInput(body.billing_address || body.billingAddress);
+      const shippingLine = normalizeShippingLineInput(body.shipping_line || body.shippingLine);
       const billingSame = body.billing_same_as_shipping || body.billingSameAsShipping;
       if (shippingAddress) input.shippingAddress = shippingAddress;
       if (billingAddress) input.billingAddress = billingAddress;
+      if (shippingLine) input.shippingLine = shippingLine;
       if (billingSame && shippingAddress && !billingAddress) {
         input.billingAddress = shippingAddress;
       }
@@ -1871,6 +1993,8 @@ exports.handler = async (event) => {
       } else if (bogoResult.discountCodes?.length) {
         input.discountCodes = bogoResult.discountCodes;
       }
+      const shippingLine = normalizeShippingLineInput(body.shipping_line || body.shippingLine);
+      if (shippingLine) input.shippingLine = shippingLine;
 
       const token = await getToken();
       const tUpdateStart = Date.now();
@@ -1943,6 +2067,31 @@ exports.handler = async (event) => {
         });
       }
       return respond(200, result);
+    }
+
+    if (path.endsWith("/customer_profile")) {
+      if (event.httpMethod !== "GET") {
+        return respond(405, { error: "Method not allowed" });
+      }
+      const params = event.queryStringParameters || {};
+      const customerId = toCustomerGid(params.customer_id || params.customerId || "");
+      if (customerId === "invalid") {
+        return respond(400, { error: "customer_id must be a Shopify customer id or gid" });
+      }
+      if (!customerId) {
+        return respond(400, { error: "customer_id required" });
+      }
+      const token = await getToken();
+      const result = await fetchCustomerProfile({ token, customerId });
+      if (result.error) {
+        const status = result.error.status || 502;
+        return respond(status, {
+          error: "Shopify profile error",
+          status,
+          body: String(result.error.body || "").slice(0, 2000),
+        });
+      }
+      return respond(200, { profile: result.profile || null });
     }
 
     if (path.endsWith("/customer_address_create")) {

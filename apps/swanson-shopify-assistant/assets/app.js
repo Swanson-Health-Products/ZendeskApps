@@ -56,6 +56,8 @@ const els = {
   invoiceUrl: document.getElementById('invoiceUrl'),
   invoiceLink: document.getElementById('invoiceLink'),
   promoCode: document.getElementById('promoCode'),
+  shippingSpeed: document.getElementById('shippingSpeed'),
+  shippingCost: document.getElementById('shippingCost'),
   subtotal: document.getElementById('subtotal'),
   totalTax: document.getElementById('totalTax'),
   total: document.getElementById('total'),
@@ -777,6 +779,7 @@ function renderOrders(orders, draftOrders) {
         const draft = data.draft_order || {};
         setInvoiceUrl(draft.invoiceUrl || order.invoice_url || '');
         setTotals(draft);
+        setShippingLineFromDraft(draft);
         setDraftButtonState(true);
         applyAddressValidationState(draft);
         const lineEdges = draft.lineItems?.edges || [];
@@ -1226,6 +1229,22 @@ function setTotals(draftOrder) {
   els.total.value = draftOrder?.totalPrice || '';
 }
 
+function setShippingLineFromDraft(draftOrder) {
+  if (!els.shippingSpeed || !els.shippingCost) return;
+  const shippingLine = draftOrder?.shippingLine || null;
+  if (!draftOrder) {
+    els.shippingSpeed.value = '';
+    els.shippingCost.value = '';
+    return;
+  }
+  if (!shippingLine) return;
+  els.shippingSpeed.value = shippingLine.title || '';
+  const amount = shippingLine.originalPriceSet?.presentmentMoney?.amount
+    || shippingLine.discountedPriceSet?.presentmentMoney?.amount
+    || '';
+  els.shippingCost.value = amount || '';
+}
+
 function setDraftButtonState(isUpdate) {
   if (!els.btnCreateDraft) return;
   els.btnCreateDraft.textContent = isUpdate ? 'Update Draft Order' : 'Create Draft Order';
@@ -1238,6 +1257,23 @@ function setDraftButtonState(isUpdate) {
 function getPromoCode() {
   const code = els.promoCode.value.trim();
   return code || '';
+}
+
+function getShippingLineInput() {
+  const speed = String(els.shippingSpeed?.value || '').trim();
+  const rawCost = String(els.shippingCost?.value || '').trim();
+  if (!speed && !rawCost) return null;
+
+  const amount = rawCost === '' ? 0 : Number(rawCost);
+  if (!Number.isFinite(amount) || amount < 0) {
+    throw new Error('Shipping Cost must be a valid non-negative number.');
+  }
+
+  return {
+    title: speed || 'Shipping',
+    amount: amount.toFixed(2),
+    currency_code: 'USD',
+  };
 }
 
 function attachButtonEffects(buttons) {
@@ -1425,6 +1461,7 @@ els.btnNewOrder.addEventListener('click', () => {
   els.draftOrderId.value = '';
   setInvoiceUrl('');
   setTotals(null);
+  setShippingLineFromDraft(null);
   applyAddressValidationState(null);
   orderItems = [];
   renderOrderItems();
@@ -1561,6 +1598,7 @@ els.btnCreateDraft.addEventListener('click', async () => {
     setStatus(els.draftStatus, isUpdate ? 'Updating draft order...' : 'Creating draft order...', '');
 
     const promoCode = orderItems.some((item) => item.bogo) ? 'INT999' : getPromoCode();
+    const shippingLine = getShippingLineInput();
 
     if (isUpdate) {
       const payload = {
@@ -1568,6 +1606,7 @@ els.btnCreateDraft.addEventListener('click', async () => {
         line_items: orderItems.map((item) => ({ variant_id: item.variantId, quantity: item.quantity })),
       };
       if (promoCode) payload.promo_code = promoCode;
+      if (shippingLine) payload.shipping_line = shippingLine;
       if (addr) {
         payload.shipping_address = addr;
         payload.billing_same_as_shipping = true;
@@ -1575,6 +1614,7 @@ els.btnCreateDraft.addEventListener('click', async () => {
       const data = await apiPost('/draft_order_update', payload);
       setInvoiceUrl(data.invoice_url || '');
       setTotals(data.draft_order || null);
+      setShippingLineFromDraft(data.draft_order || null);
       applyAddressValidationState(data.draft_order || null);
       setStatus(els.draftStatus, `Draft order ${data.draft_order?.name || ''} updated.`, 'good');
       return;
@@ -1586,6 +1626,7 @@ els.btnCreateDraft.addEventListener('click', async () => {
       note: 'Swanson Shopify Assistant',
     };
     if (promoCode) payload.promo_code = promoCode;
+    if (shippingLine) payload.shipping_line = shippingLine;
     if (addr) {
       payload.shipping_address = addr;
       payload.billing_same_as_shipping = true;
@@ -1594,6 +1635,7 @@ els.btnCreateDraft.addEventListener('click', async () => {
     els.draftOrderId.value = data.draft_order?.legacyResourceId || '';
     setInvoiceUrl(data.invoice_url || '');
     setTotals(data.draft_order || null);
+    setShippingLineFromDraft(data.draft_order || null);
     applyAddressValidationState(data.draft_order || null);
     setDraftButtonState(true);
     setStatus(els.draftStatus, `Draft order ${data.draft_order?.name || ''} created.`, 'good');
@@ -1687,6 +1729,7 @@ resizeObserver.observe(document.body, { childList: true, subtree: true, attribut
 setStatus(els.apiStatus, 'Ready.', '');
 setInvoiceUrl('');
 setTotals(null);
+setShippingLineFromDraft(null);
 renderCustomerProfile(null);
 applyAddressValidationState(null);
 setDraftButtonState(false);

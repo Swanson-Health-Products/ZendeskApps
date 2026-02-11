@@ -111,6 +111,57 @@
     .status.bad { color: var(--bad); }
     .list { margin: 0; padding: 0; list-style: none; }
     .list li { padding: 8px 0; border-bottom: 1px dashed var(--border); }
+    .customer-profile {
+      margin-top: 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px;
+      background: #ffffff;
+    }
+    .customer-profile h4 {
+      margin: 0 0 8px;
+      font-size: 14px;
+    }
+    .profile-grid {
+      display: grid;
+      gap: 8px;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      margin-bottom: 8px;
+    }
+    .profile-item {
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .profile-item strong {
+      display: block;
+      font-size: 13px;
+      color: var(--text);
+    }
+    .subscription-list {
+      margin: 6px 0 0;
+      padding-left: 18px;
+      font-size: 12px;
+      color: var(--text);
+    }
+    .inventory-badge {
+      display: inline-block;
+      font-size: 11px;
+      padding: 2px 6px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      color: #33461c;
+      background: #edf6e7;
+    }
+    .inventory-badge.low {
+      color: #7a4b00;
+      background: #fff4e5;
+      border-color: #f5c26b;
+    }
+    .inventory-badge.out {
+      color: #b42318;
+      background: #fdecec;
+      border-color: #f0b5b5;
+    }
     .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); font-size: 12px; }
     .sku-card {
       display: grid;
@@ -479,6 +530,24 @@
       <div class="row" style="margin-top:8px;">
         <button id="btnSelectFirstCustomer" class="btn-compact secondary" style="display:none;">Select First Result</button>
       </div>
+      <div id="customerProfile" class="customer-profile" style="display:none;">
+        <h4>Customer Profile</h4>
+        <div id="customerProfileGrid" class="profile-grid"></div>
+        <div style="margin-top:6px;">
+          <strong style="font-size:12px;">Subscription Activity</strong>
+          <ul id="customerSubscriptions" class="subscription-list"></ul>
+        </div>
+      </div>
+      <div style="margin-top:10px;">
+        <label>Agent Macros</label>
+        <div class="row">
+          <button class="btn-compact secondary macro-btn" data-macro="Refund initiated for customer request.">Refund Initiated</button>
+          <button class="btn-compact secondary macro-btn" data-macro="Replacement order created and customer notified.">Replacement Sent</button>
+          <button class="btn-compact secondary macro-btn" data-macro="Tracking details shared with customer.">Tracking Shared</button>
+          <button class="btn-compact secondary macro-btn" data-macro="Escalated to fulfillment for manual review.">Escalated</button>
+        </div>
+        <div class="status" id="macroStatus"></div>
+      </div>
 
       <details id="newCustomerPanel" style="margin-top:12px;">
         <summary style="cursor:pointer; font-weight:600;">Create New Customer</summary>
@@ -608,6 +677,7 @@
             <th>SKU</th>
             <th>Title</th>
             <th>Price</th>
+            <th>Inventory</th>
             <th>Qty</th>
             <th></th>
           </tr>
@@ -619,6 +689,20 @@
         <div>
           <label>Promo Code</label>
           <input id="promoCode" placeholder="e.g. SAVE50" />
+        </div>
+        <div>
+          <label>Shipping Speed</label>
+          <select id="shippingSpeed">
+            <option value="">Select speed...</option>
+            <option value="Standard Shipping">Standard Shipping</option>
+            <option value="Expedited Shipping">Expedited Shipping</option>
+            <option value="2-Day Shipping">2-Day Shipping</option>
+            <option value="Overnight Shipping">Overnight Shipping</option>
+          </select>
+        </div>
+        <div>
+          <label>Shipping Cost (USD)</label>
+          <input id="shippingCost" type="number" min="0" step="0.01" placeholder="0.00" />
         </div>
       </div>
 
