@@ -1,4 +1,4 @@
-﻿{
+{
   "name": "Shopify Customer Lookup",
   "author": {
     "name": "Kevin Wolf",
@@ -6,7 +6,7 @@
     "url": "https://swansonvitamins.com"
   },
   "icon": "assets/logo-small.png",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "frameworkVersion": "2.0",
   "defaultLocale": "en-US",
   "private": true,
@@ -22,9 +22,11 @@
       }
     }
   },
-  "domainWhitelist": [
-    "rvkg901wy9.execute-api.us-east-1.amazonaws.com"
-  ],
+  "requirements": {
+    "zendesk_apps_proxy": {
+      "type": "apps_proxy"
+    }
+  },
   "parameters": [
     {
       "name": "apiBaseUrl",
@@ -40,13 +42,6 @@
       "required": true,
       "secure": true,
       "description": "API key used for Shopify lookup requests."
-    },
-    {
-      "name": "apiKeyPublic",
-      "type": "text",
-      "required": false,
-      "secure": false,
-      "description": "Public API key fallback for browser access."
     },
     {
       "name": "maxResults",

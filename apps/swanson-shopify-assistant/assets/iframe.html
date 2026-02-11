@@ -701,8 +701,14 @@
           </select>
         </div>
         <div>
-          <label>Shipping Cost (USD)</label>
-          <input id="shippingCost" type="number" min="0" step="0.01" placeholder="0.00" />
+          <label>Shipping Cost (USD, auto)</label>
+          <input id="shippingCost" readonly placeholder="Auto-calculated" />
+        </div>
+        <div>
+          <label style="display:flex; align-items:center; gap:6px; margin-top:24px;">
+            <input id="freeShipping" type="checkbox" style="width:auto;" />
+            Free shipping
+          </label>
         </div>
       </div>
 

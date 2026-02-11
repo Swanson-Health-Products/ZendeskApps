@@ -237,11 +237,11 @@
       }
 
       async function lookup() {
-        const apiBaseUrl = (settings.apiBaseUrl || '').trim();
-        const apiKey = (settings.apiKey || settings.apiKeyPublic || '').trim();
+        const DEFAULT_API_BASE_URL = 'https://rvkg901wy9.execute-api.us-east-1.amazonaws.com/prod';
+        const apiBaseUrl = (settings.apiBaseUrl || DEFAULT_API_BASE_URL || '').trim();
         const maxResults = (settings.maxResults || '').trim();
 
-        if (!apiBaseUrl || !apiKey) {
+        if (!apiBaseUrl) {
           setStatus('Missing API settings. Check app configuration.', true);
           return;
         }
@@ -266,12 +266,13 @@
         setStatus('Searching...', false);
 
         try {
-          const url = `${apiBaseUrl.replace(/\/$/, '')}/search?${params.toString()}`;
+          const target = `${apiBaseUrl.replace(/\/$/, '')}/search?${params.toString()}`;
+          const url = `/api/v2/zendesk_apps_proxy/proxy/apps/secure/${encodeURIComponent(target)}`;
           const res = await client.request({
             url,
             type: 'GET',
             headers: {
-              'X-Api-Key': apiKey,
+              'X-Api-Key': '{{setting.apiKey}}',
               'Accept': 'application/json'
             },
             dataType: 'json',
