@@ -722,6 +722,24 @@ function formatShipmentState(value, fallbackFulfillment) {
   return formatFulfillmentLabel(fallbackFulfillment);
 }
 
+function formatFraudLevel(value) {
+  const raw = String(value || '').trim().toUpperCase();
+  if (!raw || raw === 'UNKNOWN') return 'Not Available';
+  if (raw === 'LOW') return 'Low';
+  if (raw === 'MEDIUM') return 'Medium';
+  if (raw === 'HIGH') return 'High';
+  return formatStatusLabel(raw);
+}
+
+function formatFraudRecommendation(value) {
+  const raw = String(value || '').trim().toUpperCase();
+  if (!raw) return 'No recommendation';
+  if (raw === 'ACCEPT') return 'Accept';
+  if (raw === 'INVESTIGATE') return 'Investigate';
+  if (raw === 'CANCEL') return 'Cancel';
+  return formatStatusLabel(raw);
+}
+
 function renderOrders(orders, draftOrders) {
   els.ordersList.innerHTML = '';
   const hasOrders = orders.length || draftOrders.length;
@@ -864,6 +882,8 @@ function renderOrders(orders, draftOrders) {
     const items = order.line_items || [];
     const shipmentStatus = formatFulfillmentLabel(order.fulfillment_status || '');
     const paymentStatus = formatStatusLabel(order.financial_status || '');
+    const fraud = order.fraud_analysis || {};
+    const fraudLevel = formatFraudLevel(fraud.level || '');
     const processed = order.processed_at ? new Date(order.processed_at).toLocaleString() : '';
     card.innerHTML = `
       <div class="order-header">
@@ -872,6 +892,7 @@ function renderOrders(orders, draftOrders) {
           <div class="order-meta">
             <span class="pill">Shipping: ${shipmentStatus}</span>
             <span class="pill">Payment: ${paymentStatus}</span>
+            <span class="pill">Fraud: ${fraudLevel}</span>
             <span class="pill">${formatMoney(order.total, order.currency)}</span>
             ${processed ? `<span class="pill">Placed: ${processed}</span>` : ''}
             ${order.legacy_id ? `<span class="pill">Order #: ${order.legacy_id}</span>` : ''}
@@ -1018,6 +1039,90 @@ function renderOrders(orders, draftOrders) {
       note.className = 'shipment-note';
       note.textContent = 'No shipments yet.';
       shipList.appendChild(note);
+    }
+
+    const fraudSection = document.createElement('div');
+    fraudSection.className = 'order-detail-section';
+    const fraudTitle = document.createElement('div');
+    fraudTitle.className = 'order-detail-title';
+    fraudTitle.textContent = 'Shopify Fraud Analysis';
+    const fraudList = document.createElement('div');
+    fraudList.className = 'order-detail-list';
+    fraudSection.appendChild(fraudTitle);
+    fraudSection.appendChild(fraudList);
+    details.appendChild(fraudSection);
+
+    const fraudRecommendation = formatFraudRecommendation(fraud.recommendation || '');
+    const fraudReasonList = Array.isArray(fraud.reasons) ? fraud.reasons : [];
+    const fraudSignals = Array.isArray(fraud.signals) ? fraud.signals : [];
+
+    const summaryRow = document.createElement('div');
+    summaryRow.className = 'order-detail-row';
+    summaryRow.innerHTML = `
+      <div class="detail-left">
+        <div class="detail-text">
+          <span class="detail-main">Recommendation: ${fraudRecommendation}</span>
+          <span class="detail-meta">Risk level: ${fraudLevel}</span>
+        </div>
+      </div>
+    `;
+    fraudList.appendChild(summaryRow);
+
+    if (!fraud.available) {
+      const unavailableRow = document.createElement('div');
+      unavailableRow.className = 'order-detail-row';
+      unavailableRow.innerHTML = `
+        <div class="detail-left">
+          <div class="detail-text">
+            <span class="detail-main">Fraud analysis not available from Shopify for this order.</span>
+            <span class="detail-meta">${fraud.unavailable_reason ? `Reason: ${fraud.unavailable_reason}` : ''}</span>
+          </div>
+        </div>
+      `;
+      fraudList.appendChild(unavailableRow);
+    } else if (fraudReasonList.length) {
+      fraudReasonList.forEach((reason) => {
+        const reasonRow = document.createElement('div');
+        reasonRow.className = 'order-detail-row';
+        reasonRow.innerHTML = `
+          <div class="detail-left">
+            <div class="detail-text">
+              <span class="detail-main">${reason}</span>
+            </div>
+          </div>
+        `;
+        fraudList.appendChild(reasonRow);
+      });
+    } else if (!fraudSignals.length) {
+      const emptyRow = document.createElement('div');
+      emptyRow.className = 'order-detail-row';
+      emptyRow.innerHTML = `
+        <div class="detail-left">
+          <div class="detail-text">
+            <span class="detail-main">No fraud signals returned by Shopify.</span>
+          </div>
+        </div>
+      `;
+      fraudList.appendChild(emptyRow);
+    }
+
+    if (fraudSignals.length) {
+      fraudSignals.slice(0, 5).forEach((signal) => {
+        const signalRow = document.createElement('div');
+        signalRow.className = 'order-detail-row';
+        const signalRecommendation = formatFraudRecommendation(signal.recommendation || '');
+        const signalScore = Number.isFinite(Number(signal.score)) ? `Score ${Number(signal.score).toFixed(2)}` : 'Score n/a';
+        const source = signal.source || 'Shopify';
+        signalRow.innerHTML = `
+          <div class="detail-left">
+            <div class="detail-text">
+              <span class="detail-main">${source}: ${signalRecommendation}</span>
+              <span class="detail-meta">${signalScore}${signal.message ? ` · ${signal.message}` : ''}</span>
+            </div>
+          </div>
+        `;
+        fraudList.appendChild(signalRow);
+      });
     }
 
     const header = card.querySelector('.order-header');

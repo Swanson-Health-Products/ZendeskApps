@@ -148,6 +148,117 @@ function roundUpToEven(quantity) {
   return qty % 2 === 0 ? qty : qty + 1;
 }
 
+function recommendationRank(value) {
+  const rec = String(value || "").trim().toLowerCase();
+  if (rec === "cancel") return 3;
+  if (rec === "investigate") return 2;
+  if (rec === "accept") return 1;
+  return 0;
+}
+
+function mapRecommendationToLevel(value) {
+  const rec = String(value || "").trim().toLowerCase();
+  if (rec === "cancel") return "high";
+  if (rec === "investigate") return "medium";
+  if (rec === "accept") return "low";
+  return "unknown";
+}
+
+function normalizeRiskSignal(risk) {
+  const recommendation = String(risk?.recommendation || "").trim().toUpperCase();
+  const message = String(risk?.message || risk?.merchant_message || "").trim();
+  const source = String(risk?.source || "").trim();
+  const scoreRaw = risk?.score;
+  const score = Number.isFinite(Number(scoreRaw)) ? Number(scoreRaw) : null;
+  return {
+    source: source || null,
+    recommendation: recommendation || null,
+    score,
+    message: message || null,
+    display: risk?.display === true,
+    cause_cancel: risk?.cause_cancel === true,
+  };
+}
+
+function summarizeShopifyOrderRisks(risks) {
+  const list = Array.isArray(risks) ? risks : [];
+  if (!list.length) {
+    return {
+      available: true,
+      recommendation: null,
+      level: "unknown",
+      reasons: [],
+      signals: [],
+    };
+  }
+
+  let topRecommendation = "";
+  let topRank = -1;
+  const reasons = [];
+  const signals = list.map((risk) => {
+    const signal = normalizeRiskSignal(risk);
+    const rank = recommendationRank(signal.recommendation);
+    if (rank > topRank) {
+      topRank = rank;
+      topRecommendation = signal.recommendation || "";
+    }
+    if (signal.message && !reasons.includes(signal.message)) {
+      reasons.push(signal.message);
+    }
+    return signal;
+  });
+
+  return {
+    available: true,
+    recommendation: topRecommendation || null,
+    level: mapRecommendationToLevel(topRecommendation),
+    reasons: reasons.slice(0, 10),
+    signals,
+  };
+}
+
+async function fetchOrderFraudAnalysis({ token, orderLegacyId }) {
+  if (!orderLegacyId) {
+    return {
+      fraud_analysis: {
+        available: false,
+        recommendation: null,
+        level: "unknown",
+        reasons: [],
+        signals: [],
+        unavailable_reason: "missing_order_id",
+      },
+    };
+  }
+
+  const path = `/admin/api/${API_VERSION}/orders/${orderLegacyId}/risks.json`;
+  const { status, body } = await httpsRequestWithRedirect({
+    method: "GET",
+    hostname: `${STORE}.myshopify.com`,
+    path,
+    headers: {
+      "X-Shopify-Access-Token": token,
+      "Accept": "application/json",
+    },
+  });
+
+  if (status >= 200 && status < 300) {
+    const payload = JSON.parse(body || "{}");
+    return { fraud_analysis: summarizeShopifyOrderRisks(payload.risks || []) };
+  }
+
+  return {
+    fraud_analysis: {
+      available: false,
+      recommendation: null,
+      level: "unknown",
+      reasons: [],
+      signals: [],
+      unavailable_reason: `shopify_risk_status_${status}`,
+    },
+  };
+}
+
 async function fetchCustomersRest({ token, query, limit }) {
   const path = `/admin/api/${API_VERSION}/customers/search.json?query=${encodeURIComponent(query)}&limit=${limit}`;
   const { status, body } = await httpsRequest({
@@ -708,6 +819,14 @@ async function fetchCustomerOrders({ token, customerId }) {
       image_url: line.image?.url || line.variant?.image?.url || line.variant?.product?.featuredImage?.url || null,
       image_alt: line.image?.altText || line.variant?.image?.altText || line.variant?.product?.featuredImage?.altText || "",
     })),
+  }));
+
+  await Promise.all(orders.map(async (order) => {
+    const riskResult = await fetchOrderFraudAnalysis({
+      token,
+      orderLegacyId: order.legacy_id,
+    });
+    order.fraud_analysis = riskResult.fraud_analysis;
   }));
 
   const legacyId = customer?.legacyResourceId || toCustomerLegacyId(customerId);
