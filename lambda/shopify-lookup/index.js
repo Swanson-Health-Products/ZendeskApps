@@ -1415,6 +1415,24 @@ async function updateDraftOrder({ token, id, input }) {
               currencyCode
             }
           }
+          lineItems(first: 50) {
+            edges {
+              node {
+                id
+                quantity
+                variant {
+                  id
+                  sku
+                }
+                title
+              }
+            }
+          }
+          customer {
+            id
+            legacyResourceId
+            email
+          }
         }
         userErrors {
           field
@@ -1897,6 +1915,21 @@ function normalizeAddressInput(input) {
   return Object.fromEntries(Object.entries(address).filter(([, value]) => value !== undefined && value !== null && value !== ""));
 }
 
+function buildDraftAddressUpdateInput(body) {
+  const shippingAddress = normalizeAddressInput(body.shipping_address || body.shippingAddress);
+  const billingAddress = normalizeAddressInput(body.billing_address || body.billingAddress);
+  const billingSame = body.billing_same_as_shipping || body.billingSameAsShipping;
+
+  const input = {};
+  if (shippingAddress) input.shippingAddress = shippingAddress;
+  if (billingAddress) input.billingAddress = billingAddress;
+  if (billingSame && shippingAddress && !billingAddress) {
+    input.billingAddress = shippingAddress;
+  }
+
+  return Object.keys(input).length ? input : null;
+}
+
 function normalizeShippingLineInput(input) {
   if (!input || typeof input !== "object") return null;
   const title = String(input.title || input.speed || "").trim();
@@ -2021,16 +2054,9 @@ exports.handler = async (event) => {
         input.discountCodes = bogoResult.discountCodes;
       }
 
-      const shippingAddress = normalizeAddressInput(body.shipping_address || body.shippingAddress);
-      const billingAddress = normalizeAddressInput(body.billing_address || body.billingAddress);
+      const addressInput = buildDraftAddressUpdateInput(body);
       const shippingLine = normalizeShippingLineInput(body.shipping_line || body.shippingLine);
-      const billingSame = body.billing_same_as_shipping || body.billingSameAsShipping;
-      if (shippingAddress) input.shippingAddress = shippingAddress;
-      if (billingAddress) input.billingAddress = billingAddress;
       if (shippingLine) input.shippingLine = shippingLine;
-      if (billingSame && shippingAddress && !billingAddress) {
-        input.billingAddress = shippingAddress;
-      }
 
       const token = await getToken();
       const result = await createDraftOrder({ token, input });
@@ -2043,7 +2069,26 @@ exports.handler = async (event) => {
         });
       }
 
-      const draftOrder = result.draftOrder;
+      let draftOrder = result.draftOrder;
+      if (addressInput && draftOrder?.id) {
+        const addressResult = await updateDraftOrder({
+          token,
+          id: draftOrder.id,
+          input: addressInput,
+        });
+        if (addressResult.error) {
+          const status = addressResult.error.status || 502;
+          return respond(status, {
+            error: "Draft order created but address update failed",
+            status,
+            body: String(addressResult.error.body || "").slice(0, 2000),
+            draft_order_id: draftOrder?.legacyResourceId || null,
+            invoice_url: draftOrder?.invoiceUrl || null,
+          });
+        }
+        draftOrder = addressResult.draftOrder || draftOrder;
+      }
+
       return respond(200, {
         draft_order: draftOrder,
         invoice_url: draftOrder?.invoiceUrl || null,
@@ -2112,6 +2157,7 @@ exports.handler = async (event) => {
       } else if (bogoResult.discountCodes?.length) {
         input.discountCodes = bogoResult.discountCodes;
       }
+      const addressInput = buildDraftAddressUpdateInput(body);
       const shippingLine = normalizeShippingLineInput(body.shipping_line || body.shippingLine);
       if (shippingLine) input.shippingLine = shippingLine;
 
@@ -2128,7 +2174,28 @@ exports.handler = async (event) => {
         });
       }
 
-      const draftOrder = result.draftOrder;
+      let draftOrder = result.draftOrder;
+      if (addressInput) {
+        const tAddressStart = Date.now();
+        const addressResult = await updateDraftOrder({
+          token,
+          id: draftOrderGid,
+          input: addressInput,
+        });
+        console.log(`[draft_order_update] addressUpdate ms=${Date.now() - tAddressStart}`);
+        if (addressResult.error) {
+          const status = addressResult.error.status || 502;
+          return respond(status, {
+            error: "Draft updated but address update failed",
+            status,
+            body: String(addressResult.error.body || "").slice(0, 2000),
+            draft_order_id: draftOrder?.legacyResourceId || null,
+            invoice_url: draftOrder?.invoiceUrl || null,
+          });
+        }
+        draftOrder = addressResult.draftOrder || draftOrder;
+      }
+
       console.log(`[draft_order_update] total ms=${Date.now() - tStart}`);
       return respond(200, {
         draft_order: draftOrder,
