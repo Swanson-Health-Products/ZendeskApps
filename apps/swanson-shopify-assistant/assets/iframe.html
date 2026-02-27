@@ -471,16 +471,180 @@
       grid-template-columns: repeat(3, minmax(140px, 1fr));
     }
     a { color: var(--accent); }
+
+    /* Zendesk side-panel compact overrides */
+    :root {
+      --bg: #f3f4f6;
+      --panel: #ffffff;
+      --border: #e4e7ec;
+      --text: #111827;
+      --muted: #6b7280;
+      --accent: #0f7a44;
+      --good: #0f7a44;
+      --bad: #b42318;
+    }
+    body {
+      background: var(--bg);
+      padding: 10px;
+      font-size: 13px;
+    }
+    header {
+      padding: 10px 12px;
+      border: 1px solid #0f7a44;
+      border-radius: 12px;
+      background: linear-gradient(120deg, #0f7a44 0%, #168e53 100%);
+      color: #ffffff;
+      margin-bottom: 8px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 15px;
+      line-height: 1.3;
+      letter-spacing: .01em;
+    }
+    header p {
+      margin-top: 3px;
+      color: rgba(255, 255, 255, .9);
+      font-size: 11px;
+    }
+    main {
+      padding: 0;
+      gap: 8px;
+    }
+    .panel {
+      border-radius: 12px;
+      box-shadow: none;
+      padding: 10px;
+    }
+    .top-nav-panel {
+      border-color: #b4dfc5;
+      background: rgba(15, 122, 68, 0.08);
+      padding: 6px;
+    }
+    .module-nav {
+      width: 100%;
+      gap: 6px;
+      flex-wrap: nowrap;
+    }
+    .module-nav button {
+      flex: 1 1 0;
+      border-radius: 999px;
+      border: 1px solid #cde8d7;
+      background: #ffffff;
+      color: #0f7a44;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 6px 8px;
+    }
+    .module-nav button.active {
+      background: #0f7a44;
+      border-color: #0f7a44;
+    }
+    h3 {
+      margin: 0;
+      font-size: 13px;
+      letter-spacing: .02em;
+      text-transform: uppercase;
+      color: #4b5563;
+    }
+    label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .03em;
+      margin-bottom: 4px;
+    }
+    .grid {
+      gap: 8px;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    }
+    input, select, textarea {
+      padding: 7px 9px;
+      border-radius: 8px;
+      font-size: 12px;
+      border-color: #d7dce3;
+    }
+    .row {
+      gap: 6px;
+    }
+    button,
+    .btn-compact,
+    .order-actions button {
+      padding: 6px 10px;
+      min-height: 30px;
+      border-radius: 8px;
+      font-size: 12px;
+    }
+    button {
+      background: #0f7a44;
+    }
+    button.primary-update {
+      background: #0f7a44;
+    }
+    button.secondary {
+      background: #f8faf9;
+      color: #1f2937;
+      border: 1px solid #d0d5dd;
+    }
+    .status {
+      font-size: 11px;
+      margin-top: 6px;
+    }
+    .customer-profile,
+    .order-card,
+    .order-detail-section,
+    .refund-panel {
+      border-radius: 10px;
+    }
+    th, td {
+      font-size: 11px;
+      padding: 7px 6px;
+    }
+    th {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: .03em;
+    }
+    .totals {
+      margin-top: 8px;
+      grid-template-columns: repeat(3, minmax(110px, 1fr));
+      gap: 6px;
+    }
+    details summary {
+      font-size: 12px;
+      color: #374151;
+    }
+    .draft-actions {
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .warning {
+      font-size: 11px;
+      border-radius: 8px;
+    }
+    @media (max-width: 560px) {
+      body {
+        padding: 8px;
+      }
+      .module-nav {
+        flex-wrap: wrap;
+      }
+      .module-nav button {
+        flex: 1 0 calc(33% - 4px);
+      }
+      .totals {
+        grid-template-columns: 1fr;
+      }
+    }
   </style>
 </head>
 <body>
   <header>
     <h1>Swanson Shopify Assistant</h1>
-    <p>Customer lookup, orders, and draft order builder.</p>
+    <p>Customer lookup, order timeline, and draft builder.</p>
   </header>
 
   <main>
-    <section class="panel">
+    <section class="panel top-nav-panel">
       <div class="module-nav">
         <button id="navCustomer" class="btn-compact">Customer</button>
         <button id="navOrders" class="btn-compact">Orders</button>
@@ -493,7 +657,7 @@
     </section>
 
     <section class="panel module active" data-step="customer">
-      <h3>1) Customer Lookup</h3>
+      <h3>Customer Lookup</h3>
       <div class="grid">
         <div>
           <label>First name</label>
@@ -635,7 +799,7 @@
     </section>
 
     <section class="panel module" data-step="orders">
-      <h3>1b) Recent Orders & Draft Orders</h3>
+      <h3>Recent Orders</h3>
       <div class="row" style="margin-top:10px;">
         <button id="btnNewOrder" class="btn-compact">New Order</button>
       </div>
@@ -644,7 +808,7 @@
     </section>
 
     <section class="panel module" data-step="order">
-      <h3>Order Builder</h3>
+      <h3>Draft Builder</h3>
       <div class="grid">
         <div>
           <label>Search (SKU or product name)</label>
