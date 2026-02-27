@@ -90,6 +90,7 @@ const productSearchCacheTtlMs = 2 * 60 * 1000;
 
 const client = ZAFClient.init();
 let settings = {};
+let appLocation = '';
 const DEFAULT_API_BASE_URL = 'https://rvkg901wy9.execute-api.us-east-1.amazonaws.com/prod';
 const SHIPPING_RATE_BY_SPEED = {
   'Standard Shipping': 6.99,
@@ -1799,22 +1800,28 @@ els.btnCreateDraft.addEventListener('click', async () => {
 
 async function loadSettings() {
   try {
-    const meta = await client.metadata();
-    const metaSettings = meta && meta.settings ? meta.settings : {};
-    let getSettings = {};
     try {
-      const settingsResult = await client.get('settings');
-      getSettings = settingsResult?.settings || settingsResult || {};
+      const context = await client.context();
+      appLocation = String(context?.location || '');
     } catch (err) {
-      getSettings = {};
+      appLocation = '';
     }
-    settings = { ...metaSettings, ...getSettings };
+    const meta = await client.metadata();
+    settings = meta && meta.settings ? meta.settings : {};
   } catch (err) {
     console.error('Failed to load settings', err);
   }
 }
 
 async function pullRequesterEmail() {
+  if (appLocation === 'new_ticket_sidebar') {
+    try {
+      const current = await client.get('currentUser.email');
+      return String(current?.['currentUser.email'] || '').trim();
+    } catch (err) {
+      return '';
+    }
+  }
   try {
     const data = await client.get(['ticket.requester.email', 'ticket.requester']);
     const email = (data && data['ticket.requester.email'])
