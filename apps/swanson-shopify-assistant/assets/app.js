@@ -321,7 +321,7 @@ function renderCustomerProfile(profile) {
   els.customerSubscriptions.innerHTML = '';
   subscriptions.slice(0, 8).forEach((sub) => {
     const li = document.createElement('li');
-    li.textContent = `${sub.sku || ''} ${sub.title || ''} · ${sub.selling_plan || 'Plan'} · Qty ${sub.quantity || 0}`;
+    li.textContent = `${sub.sku || ''} ${sub.title || ''} - ${sub.selling_plan || 'Plan'} - Qty ${sub.quantity || 0}`;
     els.customerSubscriptions.appendChild(li);
   });
 }
@@ -898,7 +898,7 @@ function renderOrders(orders, draftOrders) {
             ${order.legacy_id ? `<span class="pill">Order #: ${order.legacy_id}</span>` : ''}
           </div>
         </div>
-        <div class="pill">Order · Click to expand</div>
+        <div class="pill">Order - Click to expand</div>
       </div>
       <div class="order-items" style="display:none;"></div>
       <div class="order-actions">
@@ -938,7 +938,7 @@ function renderOrders(orders, draftOrders) {
           ${thumb ? `<img class="detail-thumb" src="${thumb}" alt="${safeTitle || safeSku}" loading="lazy" />` : '<div class="detail-thumb detail-thumb-empty">No image</div>'}
           <div class="detail-text">
             <span class="detail-main">${safeSku} - ${safeTitle}</span>
-            <span class="detail-meta">Qty ${totalQty} · ${fulfillmentText}</span>
+            <span class="detail-meta">Qty ${totalQty} - ${fulfillmentText}</span>
           </div>
         </div>
         <div class="detail-right">
@@ -1003,7 +1003,7 @@ function renderOrders(orders, draftOrders) {
           shipmentItems.forEach((line) => {
             const li = document.createElement('div');
             li.className = 'shipment-item';
-            li.textContent = `Fulfilled: ${line.sku || ''} - ${line.title || ''} · Qty ${line.quantity || 0}`;
+            li.textContent = `Fulfilled: ${line.sku || ''} - ${line.title || ''} - Qty ${line.quantity || 0}`;
             shipmentCard.appendChild(li);
           });
         }
@@ -1117,7 +1117,7 @@ function renderOrders(orders, draftOrders) {
           <div class="detail-left">
             <div class="detail-text">
               <span class="detail-main">${source}: ${signalRecommendation}</span>
-              <span class="detail-meta">${signalScore}${signal.message ? ` · ${signal.message}` : ''}</span>
+              <span class="detail-meta">${signalScore}${signal.message ? ` - ${signal.message}` : ''}</span>
             </div>
           </div>
         `;
