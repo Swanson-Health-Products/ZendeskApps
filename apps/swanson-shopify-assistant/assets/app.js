@@ -967,7 +967,7 @@ function renderOrders(orders, draftOrders) {
             ${order.legacy_id ? `<span class="pill">Order #: ${order.legacy_id}</span>` : ''}
           </div>
         </div>
-        <div class="pill">Order - Click to expand</div>
+        <button class="secondary order-expand-toggle" type="button" aria-label="Expand order details" aria-expanded="false" title="Expand order details">▸</button>
       </div>
       <div class="order-items" style="display:none;"></div>
       <div class="order-actions">
@@ -1195,14 +1195,35 @@ function renderOrders(orders, draftOrders) {
     }
 
     const header = card.querySelector('.order-header');
+    const expandToggle = card.querySelector('.order-expand-toggle');
+    const setExpanded = (expanded) => {
+      details.style.display = expanded ? 'block' : 'none';
+      if (expandToggle) {
+        expandToggle.textContent = expanded ? '▾' : '▸';
+        expandToggle.setAttribute('aria-expanded', String(expanded));
+        expandToggle.setAttribute('aria-label', expanded ? 'Collapse order details' : 'Expand order details');
+        expandToggle.title = expanded ? 'Collapse order details' : 'Expand order details';
+      }
+    };
     header.addEventListener('click', () => {
       const isOpening = details.style.display === 'none';
       if (isOpening) {
-        document.querySelectorAll('.order-item-card .order-items').forEach((other) => {
-          if (other !== details) other.style.display = 'none';
+        document.querySelectorAll('.order-item-card').forEach((otherCard) => {
+          if (otherCard === card) return;
+          const otherDetails = otherCard.querySelector('.order-items');
+          const otherToggle = otherCard.querySelector('.order-expand-toggle');
+          if (otherDetails) {
+            otherDetails.style.display = 'none';
+          }
+          if (otherToggle) {
+            otherToggle.textContent = '▸';
+            otherToggle.setAttribute('aria-expanded', 'false');
+            otherToggle.setAttribute('aria-label', 'Expand order details');
+            otherToggle.title = 'Expand order details';
+          }
         });
       }
-      details.style.display = isOpening ? 'block' : 'none';
+      setExpanded(isOpening);
     });
 
     const refundPanel = document.createElement('div');
