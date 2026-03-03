@@ -56,6 +56,7 @@ const els = {
   invoiceUrl: document.getElementById('invoiceUrl'),
   invoiceLink: document.getElementById('invoiceLink'),
   promoCode: document.getElementById('promoCode'),
+  promoStatus: document.getElementById('promoStatus'),
   shippingSpeed: document.getElementById('shippingSpeed'),
   shippingCost: document.getElementById('shippingCost'),
   freeShipping: document.getElementById('freeShipping'),
@@ -808,6 +809,12 @@ function renderOrders(orders, draftOrders) {
         const draft = data.draft_order || {};
         setInvoiceUrl(draft.invoiceUrl || order.invoice_url || '');
         setTotals(draft);
+        const loadedDiscount = getDraftDiscountAmount(draft);
+        if (loadedDiscount > 0) {
+          setStatus(els.promoStatus, `Loaded draft includes -$${loadedDiscount.toFixed(2)} in discounts.`, 'good');
+        } else {
+          clearPromoStatus();
+        }
         setShippingLineFromDraft(draft);
         setDraftButtonState(true);
         applyAddressValidationState(draft);
@@ -1352,6 +1359,43 @@ function setTotals(draftOrder) {
   els.total.value = draftOrder?.totalPrice || '';
 }
 
+function parseMoneyAmount(value) {
+  const amount = Number(value);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function getDraftDiscountAmount(draftOrder) {
+  const nested = draftOrder?.totalDiscountsSet?.presentmentMoney?.amount;
+  if (nested !== undefined && nested !== null && nested !== '') {
+    return parseMoneyAmount(nested);
+  }
+  return parseMoneyAmount(draftOrder?.totalDiscounts);
+}
+
+function clearPromoStatus() {
+  if (!els.promoStatus) return;
+  setStatus(els.promoStatus, '', '');
+}
+
+function setPromoResultStatus(promoCode, draftOrder, bogoOverride) {
+  if (!els.promoStatus) return;
+  const normalized = String(promoCode || '').trim().toUpperCase();
+  if (!normalized) {
+    setStatus(els.promoStatus, 'No promo code applied.', '');
+    return;
+  }
+  const discountAmount = getDraftDiscountAmount(draftOrder);
+  if (discountAmount > 0) {
+    setStatus(els.promoStatus, `Promo ${normalized} applied: -$${discountAmount.toFixed(2)}.`, 'good');
+    return;
+  }
+  if (bogoOverride) {
+    setStatus(els.promoStatus, 'BOGO cart forced promo INT999, but no discount was returned.', 'bad');
+    return;
+  }
+  setStatus(els.promoStatus, `Promo ${normalized} was sent, but no discount was returned for current items.`, 'bad');
+}
+
 function setShippingLineFromDraft(draftOrder) {
   if (!els.shippingSpeed || !els.shippingCost || !els.freeShipping) return;
   syncingShippingUi = true;
@@ -1622,6 +1666,7 @@ els.btnNewOrder.addEventListener('click', () => {
   els.draftOrderId.value = '';
   setInvoiceUrl('');
   setTotals(null);
+  clearPromoStatus();
   setShippingLineFromDraft(null);
   applyAddressValidationState(null);
   orderItems = [];
@@ -1760,7 +1805,8 @@ els.btnCreateDraft.addEventListener('click', async () => {
     }
     setStatus(els.draftStatus, isUpdate ? 'Updating draft order...' : 'Creating draft order...', '');
 
-    const promoCode = orderItems.some((item) => item.bogo) ? 'INT999' : getPromoCode();
+    const hasBogoItems = orderItems.some((item) => item.bogo);
+    const promoCode = hasBogoItems ? 'INT999' : getPromoCode();
     const shippingLine = getShippingLineInput();
 
     if (isUpdate) {
@@ -1777,6 +1823,7 @@ els.btnCreateDraft.addEventListener('click', async () => {
       const data = await apiPost('/draft_order_update', payload);
       setInvoiceUrl(data.invoice_url || '');
       setTotals(data.draft_order || null);
+      setPromoResultStatus(promoCode, data.draft_order || null, hasBogoItems);
       setShippingLineFromDraft(data.draft_order || null);
       applyAddressValidationState(data.draft_order || null);
       setStatus(els.draftStatus, `Draft order ${data.draft_order?.name || ''} updated.`, 'good');
@@ -1798,6 +1845,7 @@ els.btnCreateDraft.addEventListener('click', async () => {
     els.draftOrderId.value = data.draft_order?.legacyResourceId || '';
     setInvoiceUrl(data.invoice_url || '');
     setTotals(data.draft_order || null);
+    setPromoResultStatus(promoCode, data.draft_order || null, hasBogoItems);
     setShippingLineFromDraft(data.draft_order || null);
     applyAddressValidationState(data.draft_order || null);
     setDraftButtonState(true);

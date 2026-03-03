@@ -74,6 +74,16 @@ Run non-destructive regression checks directly in the live app iframe through Ch
   - no blocking runtime errors from `Swanson Shopify Assistant`
   - external warnings from other apps are acceptable
 
+8. Promo outcome visibility
+- Action:
+  1. In `Cart`, enter a promo code.
+  2. Create or update a draft order.
+  3. Inspect `#promoStatus` text.
+- Expected:
+  - when discount > 0: `Promo <CODE> applied: -$X.XX.`
+  - when discount = 0 with promo entered: `Promo <CODE> was sent, but no discount was returned for current items.`
+  - no stale promo status when `New Order` is started
+
 ## Results (2026-03-03)
 
 - Case 1: PASS
@@ -83,6 +93,7 @@ Run non-destructive regression checks directly in the live app iframe through Ch
 - Case 5: PASS
 - Case 6: PASS
 - Case 7: PASS (no blocking Swanson app errors observed)
+- Case 8: Pending (run after deployment of promo-status UI change)
 
 Notes:
 - Console warnings were primarily from `Shopify Premium for Zendesk` and platform integrations, not from `Swanson Shopify Assistant`.
