@@ -1,5 +1,8 @@
 const https = require("https");
+const crypto = require("crypto");
 const { SecretsManagerClient, GetSecretValueCommand } = require("@aws-sdk/client-secrets-manager");
+const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
+const { DynamoDBDocumentClient, BatchWriteCommand } = require("@aws-sdk/lib-dynamodb");
 
 const STORE = process.env.SHOPIFY_STORE;
 const API_VERSION = process.env.SHOPIFY_API_VERSION || "2024-10";
@@ -7,8 +10,16 @@ const SECRET_ARN = process.env.SHOPIFY_TOKEN_SECRET_ARN;
 const MAX_RESULTS = Number(process.env.MAX_RESULTS || 10);
 const SWANSON_SCAN_PAGE_SIZE = Number(process.env.SWANSON_SCAN_PAGE_SIZE || 50);
 const SWANSON_SCAN_MAX_PAGES = Number(process.env.SWANSON_SCAN_MAX_PAGES || 20);
+const AUDIT_LOG_TABLE = String(process.env.AUDIT_LOG_TABLE || "").trim();
+const AUDIT_LOG_TTL_DAYS = Number(process.env.AUDIT_LOG_TTL_DAYS || 90);
 
 const secretsManager = new SecretsManagerClient({});
+const dynamoDbClient = new DynamoDBClient({});
+const documentClient = DynamoDBDocumentClient.from(dynamoDbClient, {
+  marshallOptions: {
+    removeUndefinedValues: true,
+  },
+});
 
 let cachedToken = null;
 let cachedTokenFetchedAt = 0;
@@ -1884,6 +1895,74 @@ function parseJsonBody(event) {
   }
 }
 
+function safeString(value, maxLen = 500) {
+  const raw = String(value === undefined || value === null ? "" : value).trim();
+  if (!raw) return "";
+  return raw.length > maxLen ? raw.slice(0, maxLen) : raw;
+}
+
+function toUnixEpochSeconds(dateLike) {
+  const parsed = new Date(dateLike || Date.now());
+  if (Number.isNaN(parsed.getTime())) return Math.floor(Date.now() / 1000);
+  return Math.floor(parsed.getTime() / 1000);
+}
+
+function buildAuditItem({ actor, ticketId, reason, eventType, detail, atIso }) {
+  const nowIso = new Date().toISOString();
+  const eventIso = safeString(atIso, 80) || nowIso;
+  const eventEpoch = toUnixEpochSeconds(eventIso);
+  const actorId = safeString(actor?.id, 120);
+  const actorName = safeString(actor?.name, 200);
+  const actorEmail = safeString(actor?.email, 320);
+  const ticket = safeString(ticketId, 120) || "new_unsaved";
+  const idSuffix = crypto.randomBytes(6).toString("hex");
+  const createdAtEpoch = Math.floor(Date.now() / 1000);
+  const ttlDays = Number.isFinite(AUDIT_LOG_TTL_DAYS) && AUDIT_LOG_TTL_DAYS > 0 ? Math.floor(AUDIT_LOG_TTL_DAYS) : 90;
+
+  return {
+    pk: `TICKET#${ticket}`,
+    sk: `AT#${eventIso}#${idSuffix}`,
+    ticket_id: ticket,
+    actor_id: actorId || null,
+    actor_name: actorName || null,
+    actor_email: actorEmail || null,
+    reason: safeString(reason, 120) || "auto",
+    event_type: safeString(eventType, 120) || "event",
+    detail: safeString(detail, 2000) || "",
+    event_at_iso: eventIso,
+    event_at_epoch: eventEpoch,
+    created_at_iso: nowIso,
+    expires_at: createdAtEpoch + (ttlDays * 24 * 60 * 60),
+  };
+}
+
+async function persistAuditEvents({ actor, ticketId, reason, events }) {
+  const sourceEvents = Array.isArray(events) ? events : [];
+  if (!sourceEvents.length) {
+    return { stored: 0, mode: AUDIT_LOG_TABLE ? "dynamodb" : "cloudwatch" };
+  }
+
+  const items = sourceEvents.map((event) => buildAuditItem({
+    actor,
+    ticketId,
+    reason,
+    eventType: event?.type,
+    detail: event?.detail,
+    atIso: event?.at,
+  }));
+
+  if (!AUDIT_LOG_TABLE) {
+    console.log("AUDIT_EVENTS", JSON.stringify({ ticket_id: ticketId || null, reason: reason || "auto", items }));
+    return { stored: items.length, mode: "cloudwatch" };
+  }
+
+  for (let i = 0; i < items.length; i += 25) {
+    const batch = items.slice(i, i + 25).map((Item) => ({ PutRequest: { Item } }));
+    await documentClient.send(new BatchWriteCommand({ RequestItems: { [AUDIT_LOG_TABLE]: batch } }));
+  }
+  return { stored: items.length, mode: "dynamodb", table: AUDIT_LOG_TABLE };
+}
+
 function normalizeAddressInput(input) {
   if (!input || typeof input !== "object") return null;
 
@@ -2340,6 +2419,28 @@ exports.handler = async (event) => {
         });
       }
       return respond(200, { customer: result.customer || null });
+    }
+
+    if (path.endsWith("/audit_log")) {
+      if (event.httpMethod !== "POST") {
+        return respond(405, { error: "Method not allowed" });
+      }
+      const { value, error } = parseJsonBody(event);
+      if (error) return respond(400, { error });
+      const body = value || {};
+      const actor = body.actor || {};
+      const events = Array.isArray(body.events) ? body.events : [];
+      if (!events.length) {
+        return respond(200, { ok: true, stored: 0, mode: AUDIT_LOG_TABLE ? "dynamodb" : "cloudwatch" });
+      }
+
+      const result = await persistAuditEvents({
+        actor,
+        ticketId: body.ticket_id || body.ticketId || "",
+        reason: body.reason || "auto",
+        events,
+      });
+      return respond(200, { ok: true, ...result });
     }
 
     if (path.endsWith("/order_cancel")) {

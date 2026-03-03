@@ -286,40 +286,51 @@ function summarizeError(err) {
   }
 }
 
-function formatAuditLine(entry) {
-  return `- [${formatCentralDateTime(entry.at)}] ${entry.type}: ${entry.detail}`;
-}
-
 function scheduleAuditFlush(delayMs = 15000) {
   if (!auditState.enabled) return;
   if (auditState.flushTimer) clearTimeout(auditState.flushTimer);
   auditState.flushTimer = setTimeout(() => {
-    flushAuditToInternalNote('auto');
+    flushAuditToBackend('auto');
   }, delayMs);
 }
 
-async function flushAuditToInternalNote(reason) {
-  if (!auditState.enabled || auditState.flushing || !auditState.entries.length) return;
-  const pending = auditState.entries.splice(0, auditState.maxEntriesPerFlush);
-  const headerTime = formatCentralDateTime();
+async function appendSessionStartInternalNote() {
+  const when = formatCentralDateTime();
   const agentLabel = `${auditState.actorName || 'Unknown Agent'}${auditState.actorId ? ` (Zendesk ID: ${auditState.actorId})` : ''}`;
   const ticketLabel = auditState.ticketId ? String(auditState.ticketId) : 'new/unsaved';
-  const lines = pending.map(formatAuditLine);
-  const block = [
-    `[Swanson Shopify Assistant Audit | ${headerTime} | ${reason}]`,
-    `Agent: ${agentLabel}${auditState.actorEmail ? ` | ${auditState.actorEmail}` : ''}`,
-    `Ticket: ${ticketLabel}`,
-    ...lines,
-    '',
-  ].join('\n');
+  const line = `[Swanson Shopify Assistant Session | ${when}] ${agentLabel} started app session on ticket ${ticketLabel}.${auditState.actorEmail ? ` (${auditState.actorEmail})` : ''}\n`;
+  try {
+    await client.invoke('ticket.comment.appendText', line);
+  } catch (err) {
+    console.warn('Session start note append failed', err);
+  }
+}
+
+async function flushAuditToBackend(reason) {
+  if (!auditState.enabled || auditState.flushing || !auditState.entries.length) return;
+  const pending = auditState.entries.splice(0, auditState.maxEntriesPerFlush);
 
   auditState.flushing = true;
   try {
-    await client.invoke('ticket.comment.appendText', block);
+    await apiPost('/audit_log', {
+      reason: String(reason || 'auto'),
+      ticket_id: auditState.ticketId || null,
+      actor: {
+        id: auditState.actorId || null,
+        name: auditState.actorName || null,
+        email: auditState.actorEmail || null,
+      },
+      events: pending.map((entry) => ({
+        at: entry.at instanceof Date ? entry.at.toISOString() : new Date(entry.at).toISOString(),
+        at_central: formatCentralDateTime(entry.at),
+        type: entry.type,
+        detail: entry.detail,
+      })),
+    });
   } catch (err) {
     // Preserve pending entries if append fails.
     auditState.entries = pending.concat(auditState.entries);
-    console.warn('Audit flush failed', err);
+    console.warn('Audit backend flush failed', err);
   } finally {
     auditState.flushing = false;
     if (auditState.entries.length) scheduleAuditFlush(20000);
@@ -340,7 +351,7 @@ function addAuditEntry(type, detail, options = {}) {
   auditState.lastSignatureAt = now;
   auditState.entries.push({ at: new Date(now), type: cleanType, detail: cleanDetail });
   if (options.flushNow) {
-    flushAuditToInternalNote(options.reason || 'immediate');
+    flushAuditToBackend(options.reason || 'immediate');
     return;
   }
   scheduleAuditFlush(options.delayMs || 15000);
@@ -356,10 +367,11 @@ async function initAuditContext() {
   } catch (err) {
     console.warn('Unable to initialize audit context', err);
   }
+  await appendSessionStartInternalNote();
   addAuditEntry(
     'session_start',
     `Session started by ${auditState.actorName || 'Unknown Agent'}${auditState.actorId ? ` (Zendesk ID ${auditState.actorId})` : ''}.`,
-    { flushNow: true, reason: 'session-start', allowDuplicate: true }
+    { flushNow: true, reason: 'session-start-backend', allowDuplicate: true }
   );
 }
 
@@ -372,6 +384,7 @@ function buildProxyUrl(path) {
 async function apiGet(path) {
   ensureSettings();
   const url = buildProxyUrl(path);
+  const shouldAuditFailure = !String(path || '').startsWith('/audit_log');
   try {
     return await client.request({
       url,
@@ -385,7 +398,9 @@ async function apiGet(path) {
       },
     });
   } catch (err) {
-    addAuditEntry('api_error', `GET ${path} failed: ${summarizeError(err)}`, { flushNow: true, reason: 'api-error' });
+    if (shouldAuditFailure) {
+      addAuditEntry('api_error', `GET ${path} failed: ${summarizeError(err)}`, { flushNow: true, reason: 'api-error' });
+    }
     throw err;
   }
 }
@@ -393,6 +408,7 @@ async function apiGet(path) {
 async function apiPost(path, body) {
   ensureSettings();
   const url = buildProxyUrl(path);
+  const shouldAuditFailure = !String(path || '').startsWith('/audit_log');
   try {
     return await client.request({
       url,
@@ -407,7 +423,9 @@ async function apiPost(path, body) {
       data: JSON.stringify(body),
     });
   } catch (err) {
-    addAuditEntry('api_error', `POST ${path} failed: ${summarizeError(err)}`, { flushNow: true, reason: 'api-error' });
+    if (shouldAuditFailure) {
+      addAuditEntry('api_error', `POST ${path} failed: ${summarizeError(err)}`, { flushNow: true, reason: 'api-error' });
+    }
     throw err;
   }
 }
@@ -2291,7 +2309,7 @@ setTimeout(() => { prefillActive = false; }, 3000);
 
 try {
   client.on('ticket.save', () => {
-    flushAuditToInternalNote('ticket-save');
+    flushAuditToBackend('ticket-save');
     return true;
   });
 } catch (err) {
@@ -2299,7 +2317,7 @@ try {
 }
 
 window.addEventListener('beforeunload', () => {
-  flushAuditToInternalNote('page-unload');
+  flushAuditToBackend('page-unload');
 });
 
 function resizeToContent() {

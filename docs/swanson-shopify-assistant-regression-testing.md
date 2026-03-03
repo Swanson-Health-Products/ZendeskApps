@@ -163,17 +163,18 @@ Limitations for this delta pass:
 - Expected:
   - Audit session entry includes signed-in Zendesk user name and user ID.
   - Timestamp is in Central Time (`America/Chicago`, CST/CDT).
+  - This is the only automatic internal-note audit write.
 
-2. CRUD and workflow entries
+2. Backend CRUD and workflow entries
 - Action:
   - Run customer search, select customer, add/remove SKU, create/update draft, and execute order actions (reorder/refund/cancel where available).
 - Expected:
-  - Internal note receives batched audit entries for each operation with clear event labels and identifiers (customer ID, order/draft IDs when present).
+  - Backend receives batched audit entries for each operation with clear event labels and identifiers (customer ID, order/draft IDs when present).
   - Error paths (for example validation/restriction blocks) are included in audit entries.
 
 3. Flush behavior
 - Action:
   - Trigger several events, then submit/save ticket.
 - Expected:
-  - Pending audit buffer flushes to internal note on ticket save.
-  - Entries remain readable and deduplicated (no rapid-repeat spam).
+  - Pending audit buffer flushes to backend `/audit_log` on ticket save.
+  - Entries remain deduplicated (no rapid-repeat spam).
