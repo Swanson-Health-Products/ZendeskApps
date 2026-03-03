@@ -370,11 +370,22 @@ function renderAddresses(addresses) {
   updateAddressPreview();
 }
 
+function autoSizeShipPreview() {
+  if (!els.shipPreview) return;
+  const minHeight = 84;
+  const maxHeight = 180;
+  els.shipPreview.style.height = 'auto';
+  const targetHeight = Math.min(maxHeight, Math.max(minHeight, els.shipPreview.scrollHeight));
+  els.shipPreview.style.height = `${targetHeight}px`;
+  els.shipPreview.style.overflowY = els.shipPreview.scrollHeight > maxHeight ? 'auto' : 'hidden';
+}
+
 function updateAddressPreview() {
   const idx = Number(els.addressSelect.value || 0);
   const addr = lastAddresses[idx];
   if (!addr) {
     els.shipPreview.value = '';
+    autoSizeShipPreview();
     selectedShipState = '';
     updateShippingRestrictionWarning();
     return;
@@ -388,6 +399,7 @@ function updateAddressPreview() {
     addr.country || '',
     addr.phone || '',
   ].filter(Boolean).join('\n');
+  autoSizeShipPreview();
   updateShippingRestrictionWarning();
 }
 
@@ -1715,6 +1727,7 @@ async function runCustomerSearch() {
     renderAddresses(lastAddresses);
     renderCustomerProfile(null);
     els.shipPreview.value = '';
+    autoSizeShipPreview();
     updateShippingRestrictionWarning();
 
     const currentId = els.customerId.value.trim();

@@ -45,6 +45,11 @@
       background: #33461c;
       color: #ffffff;
     }
+    .module-nav button:hover,
+    .module-nav button.clicked-hover {
+      background: #2a3a16;
+      color: #ffffff;
+    }
     .panel {
       background: var(--panel);
       border: 1px solid var(--border);
@@ -306,6 +311,17 @@
       display: grid;
       gap: 10px;
     }
+    #shipPreview {
+      font-family: inherit;
+      line-height: 1.4;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      min-height: 84px;
+      max-height: 180px;
+      resize: vertical;
+      overflow-y: auto;
+    }
     .order-detail-section {
       border: 1px solid var(--border);
       border-radius: 10px;
@@ -551,6 +567,12 @@
     .module-nav button.active {
       background: #0f7a44;
       border-color: #0f7a44;
+      color: #ffffff;
+    }
+    .module-nav button:hover,
+    .module-nav button.clicked-hover {
+      background: #2a3a16;
+      border-color: #2a3a16;
       color: #ffffff;
     }
     h3 {

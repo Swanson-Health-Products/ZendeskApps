@@ -139,7 +139,7 @@ function toVariantGid(input) {
 
 function isBogoPricing(pricingValue) {
   if (!pricingValue) return false;
-  return String(pricingValue).includes("N9J=bogo:10.59");
+  return /\bbogo\b/i.test(String(pricingValue));
 }
 
 function roundUpToEven(quantity) {
