@@ -1309,6 +1309,13 @@ function minimizeOrdersSection() {
   }
 }
 
+function restoreOrdersSection() {
+  ordersMinimized = false;
+  if (els.ordersList) {
+    els.ordersList.style.display = 'block';
+  }
+}
+
 async function handleCustomerSelect(customer, allCustomers) {
   els.customerId.value = customer.id;
   renderCustomers(allCustomers, customer.id);
@@ -1662,6 +1669,8 @@ els.btnAddAddress.addEventListener('click', async () => {
 
 async function fetchOrdersForCustomer(customerId) {
   try {
+    // Unhide orders when loading a customer, even if "New Order" minimized the list earlier.
+    restoreOrdersSection();
     setStatus(els.ordersStatus, 'Loading recent orders...', '');
     const data = await apiGet(`/customer_orders?customer_id=${encodeURIComponent(customerId)}`);
     lastOrders = data.orders || [];

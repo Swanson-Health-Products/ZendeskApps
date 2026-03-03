@@ -12,18 +12,18 @@ Run from the app folder:
 
 ```powershell
 cd C:\Users\kevin.wolf\ZendeskApps\apps\swanson-shopify-assistant
-npx @zendesk/zcli apps:validate .
-npx @zendesk/zcli apps:package .
+npx --yes @zendesk/zcli@1.0.0-beta.55 apps:validate .
+npx --yes @zendesk/zcli@1.0.0-beta.55 apps:package .
 ```
 
 Deploy:
 
 ```powershell
 # existing private app (uses app_id from zcli.apps.config.json)
-npx @zendesk/zcli apps:update .
+npx --yes @zendesk/zcli@1.0.0-beta.55 apps:update .
 
 # first-time install
-npx @zendesk/zcli apps:create .
+npx --yes @zendesk/zcli@1.0.0-beta.55 apps:create .
 ```
 
 `zcli.apps.config.json` example:
@@ -37,7 +37,7 @@ Use one of these:
 
 1. Interactive profile login
 ```powershell
-npx @zendesk/zcli login -i
+npx --yes @zendesk/zcli@1.0.0-beta.55 login -i
 ```
 
 2. Environment variables (non-interactive)
@@ -46,6 +46,23 @@ $env:ZENDESK_SUBDOMAIN='swansonhealthproducts'
 $env:ZENDESK_EMAIL='<agent_email>'
 $env:ZENDESK_API_TOKEN='<api_token>'
 ```
+
+Official precedence is:
+1. CLI flags
+2. Environment variables
+3. `~/.config/zcli/config.json`
+
+If using WSL, avoid env-var auth for Windows-hosted credentials and prefer profile/config auth.
+
+## Recommended Local Setup (Best Practice)
+- Use a pinned `zcli` version in `npx` commands for reproducible behavior.
+- Keep `zcli.apps.config.json` in each app folder for stable `apps:update`.
+- Keep npm online mode enabled for CLI fetches:
+```powershell
+"offline=false`nprefer-offline=false`n" | Set-Content "$HOME\.npmrc" -Encoding ascii
+```
+- Prefer Node LTS (22.x) for Windows stability when Node 24 causes runtime issues.
+- Use global install only if it is stable on the machine. If global install errors, use pinned `npx` commands above.
 
 ## Known App IDs
 - `swanson-shopify-assistant`: `1212333` (confirmed in Zendesk Admin API)
@@ -68,6 +85,7 @@ If CLI deploy is blocked:
 
 ## Common Failures
 - `zcli` not found: invoke with `npx @zendesk/zcli`.
+- npm cache-only mode (`ENOTCACHED`): check/remove `NPM_CONFIG_OFFLINE=true` and set `.npmrc` `offline=false`.
 - Auth/profile missing: run `login -i` or set `ZENDESK_*` env vars.
 - API token errors: verify token validity and role permissions.
 - CLI runtime issues: retry with Node 22 LTS if Node 24 causes native/assertion errors.
