@@ -86,6 +86,7 @@ let prefillActive = true;
 let currentAddressValidation = { valid: true, requiresOverride: false, message: '' };
 let lastCustomerProfile = null;
 let syncingShippingUi = false;
+let lastRestrictionConflictState = '';
 const productSearchCache = new Map();
 const productSearchCacheTtlMs = 2 * 60 * 1000;
 
@@ -93,11 +94,39 @@ const client = ZAFClient.init();
 let settings = {};
 let appLocation = '';
 const DEFAULT_API_BASE_URL = 'https://rvkg901wy9.execute-api.us-east-1.amazonaws.com/prod';
+const CENTRAL_TIME_ZONE = 'America/Chicago';
 const SHIPPING_RATE_BY_SPEED = {
   'Standard Shipping': 6.99,
   'Expedited Shipping': 12.99,
   '2-Day Shipping': 19.99,
   'Overnight Shipping': 29.99,
+};
+const centralDateFormatter = new Intl.DateTimeFormat('en-US', {
+  timeZone: CENTRAL_TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hour12: false,
+});
+const centralTzFormatter = new Intl.DateTimeFormat('en-US', {
+  timeZone: CENTRAL_TIME_ZONE,
+  timeZoneName: 'short',
+});
+const auditState = {
+  enabled: true,
+  actorId: '',
+  actorName: '',
+  actorEmail: '',
+  ticketId: '',
+  flushTimer: null,
+  flushing: false,
+  entries: [],
+  lastSignature: '',
+  lastSignatureAt: 0,
+  maxEntriesPerFlush: 25,
 };
 
 const US_STATE_MAP = {
@@ -238,6 +267,102 @@ function parseApiErrorMessage(message) {
   }
 }
 
+function formatCentralDateTime(value) {
+  const parsed = value ? new Date(value) : new Date();
+  if (Number.isNaN(parsed.getTime())) return '';
+  const datePart = centralDateFormatter.format(parsed);
+  const tzPart = centralTzFormatter.formatToParts(parsed).find((part) => part.type === 'timeZoneName')?.value || 'CT';
+  return `${datePart} ${tzPart}`;
+}
+
+function summarizeError(err) {
+  if (!err) return 'Unknown error';
+  if (typeof err === 'string') return err;
+  if (err.message) return String(err.message);
+  try {
+    return JSON.stringify(err);
+  } catch (jsonErr) {
+    return 'Unknown error';
+  }
+}
+
+function formatAuditLine(entry) {
+  return `- [${formatCentralDateTime(entry.at)}] ${entry.type}: ${entry.detail}`;
+}
+
+function scheduleAuditFlush(delayMs = 15000) {
+  if (!auditState.enabled) return;
+  if (auditState.flushTimer) clearTimeout(auditState.flushTimer);
+  auditState.flushTimer = setTimeout(() => {
+    flushAuditToInternalNote('auto');
+  }, delayMs);
+}
+
+async function flushAuditToInternalNote(reason) {
+  if (!auditState.enabled || auditState.flushing || !auditState.entries.length) return;
+  const pending = auditState.entries.splice(0, auditState.maxEntriesPerFlush);
+  const headerTime = formatCentralDateTime();
+  const agentLabel = `${auditState.actorName || 'Unknown Agent'}${auditState.actorId ? ` (Zendesk ID: ${auditState.actorId})` : ''}`;
+  const ticketLabel = auditState.ticketId ? String(auditState.ticketId) : 'new/unsaved';
+  const lines = pending.map(formatAuditLine);
+  const block = [
+    `[Swanson Shopify Assistant Audit | ${headerTime} | ${reason}]`,
+    `Agent: ${agentLabel}${auditState.actorEmail ? ` | ${auditState.actorEmail}` : ''}`,
+    `Ticket: ${ticketLabel}`,
+    ...lines,
+    '',
+  ].join('\n');
+
+  auditState.flushing = true;
+  try {
+    await client.invoke('ticket.comment.appendText', block);
+  } catch (err) {
+    // Preserve pending entries if append fails.
+    auditState.entries = pending.concat(auditState.entries);
+    console.warn('Audit flush failed', err);
+  } finally {
+    auditState.flushing = false;
+    if (auditState.entries.length) scheduleAuditFlush(20000);
+  }
+}
+
+function addAuditEntry(type, detail, options = {}) {
+  if (!auditState.enabled) return;
+  const cleanType = String(type || 'event').trim();
+  const cleanDetail = String(detail || '').replace(/\s+/g, ' ').trim();
+  if (!cleanType || !cleanDetail) return;
+  const signature = `${cleanType}|${cleanDetail}`;
+  const now = Date.now();
+  if (!options.allowDuplicate && signature === auditState.lastSignature && now - auditState.lastSignatureAt < 1500) {
+    return;
+  }
+  auditState.lastSignature = signature;
+  auditState.lastSignatureAt = now;
+  auditState.entries.push({ at: new Date(now), type: cleanType, detail: cleanDetail });
+  if (options.flushNow) {
+    flushAuditToInternalNote(options.reason || 'immediate');
+    return;
+  }
+  scheduleAuditFlush(options.delayMs || 15000);
+}
+
+async function initAuditContext() {
+  try {
+    const data = await client.get(['currentUser.id', 'currentUser.name', 'currentUser.email', 'ticket.id']);
+    auditState.actorId = String(data?.['currentUser.id'] || '').trim();
+    auditState.actorName = String(data?.['currentUser.name'] || '').trim();
+    auditState.actorEmail = String(data?.['currentUser.email'] || '').trim();
+    auditState.ticketId = String(data?.['ticket.id'] || '').trim();
+  } catch (err) {
+    console.warn('Unable to initialize audit context', err);
+  }
+  addAuditEntry(
+    'session_start',
+    `Session started by ${auditState.actorName || 'Unknown Agent'}${auditState.actorId ? ` (Zendesk ID ${auditState.actorId})` : ''}.`,
+    { flushNow: true, reason: 'session-start', allowDuplicate: true }
+  );
+}
+
 function buildProxyUrl(path) {
   const base = (settings.apiBaseUrl || DEFAULT_API_BASE_URL || '').trim().replace(/\/$/, '');
   const target = `${base}${path}`;
@@ -247,34 +372,44 @@ function buildProxyUrl(path) {
 async function apiGet(path) {
   ensureSettings();
   const url = buildProxyUrl(path);
-  return client.request({
-    url,
-    type: 'GET',
-    dataType: 'json',
-    cache: false,
-    headers: {
-      'X-Api-Key': settings.apiKey || '',
-      'Accept': 'application/json',
-      'Cache-Control': 'no-cache',
-    },
-  });
+  try {
+    return await client.request({
+      url,
+      type: 'GET',
+      dataType: 'json',
+      cache: false,
+      headers: {
+        'X-Api-Key': settings.apiKey || '',
+        'Accept': 'application/json',
+        'Cache-Control': 'no-cache',
+      },
+    });
+  } catch (err) {
+    addAuditEntry('api_error', `GET ${path} failed: ${summarizeError(err)}`, { flushNow: true, reason: 'api-error' });
+    throw err;
+  }
 }
 
 async function apiPost(path, body) {
   ensureSettings();
   const url = buildProxyUrl(path);
-  return client.request({
-    url,
-    type: 'POST',
-    dataType: 'json',
-    contentType: 'application/json',
-    cache: false,
-    headers: {
-      'X-Api-Key': settings.apiKey || '',
-      'Accept': 'application/json',
-    },
-    data: JSON.stringify(body),
-  });
+  try {
+    return await client.request({
+      url,
+      type: 'POST',
+      dataType: 'json',
+      contentType: 'application/json',
+      cache: false,
+      headers: {
+        'X-Api-Key': settings.apiKey || '',
+        'Accept': 'application/json',
+      },
+      data: JSON.stringify(body),
+    });
+  } catch (err) {
+    addAuditEntry('api_error', `POST ${path} failed: ${summarizeError(err)}`, { flushNow: true, reason: 'api-error' });
+    throw err;
+  }
 }
 
 function renderCustomers(customers, selectedId) {
@@ -334,12 +469,15 @@ async function applyAgentMacro(text) {
   try {
     await client.invoke('ticket.comment.appendText', `${message}\n`);
     setStatus(els.macroStatus, 'Macro inserted into internal note.', 'good');
+    addAuditEntry('macro', `Applied macro text (${Math.min(message.length, 120)} chars).`);
   } catch (err) {
     try {
       await navigator.clipboard.writeText(message);
       setStatus(els.macroStatus, 'Could not insert directly. Macro copied to clipboard.', 'bad');
+      addAuditEntry('macro', `Macro fallback to clipboard due to append failure: ${summarizeError(err)}.`);
     } catch (clipErr) {
       setStatus(els.macroStatus, 'Unable to insert macro automatically.', 'bad');
+      addAuditEntry('macro_error', `Macro apply failed: ${summarizeError(clipErr)}`, { flushNow: true, reason: 'macro-error' });
     }
   }
 }
@@ -499,10 +637,15 @@ function updateShippingRestrictionWarning() {
   if (!conflictState) {
     els.shipWarning.style.display = 'none';
     els.shipWarning.textContent = '';
+    lastRestrictionConflictState = '';
     return;
   }
   els.shipWarning.style.display = 'block';
   els.shipWarning.textContent = `Caution: One or more items cannot ship to ${conflictState}.`;
+  if (lastRestrictionConflictState !== conflictState) {
+    addAuditEntry('shipping_restriction_warning', `Cart contains item(s) restricted for state ${conflictState}.`);
+    lastRestrictionConflictState = conflictState;
+  }
 }
 
 function extractAddressValidationSummary(draftOrder) {
@@ -623,6 +766,7 @@ async function lookupSkuAndRender(sku, options = {}) {
   const data = await apiGet(`/sku_lookup?sku=${encodeURIComponent(sku)}&limit=5&cb=${Date.now()}`);
   const variant = data.variant || pickVariantBySku(data.variants || [], sku);
   if (!variant) {
+    addAuditEntry('sku_lookup_miss', `No variant found for SKU/query "${sku}".`);
     if (throwOnMissing) throw new Error('No variant found');
     return null;
   }
@@ -632,6 +776,7 @@ async function lookupSkuAndRender(sku, options = {}) {
   if (variant.bogo) {
     els.promoCode.value = 'INT999';
   }
+  addAuditEntry('sku_lookup_hit', `Matched SKU ${variant.sku || sku}${variant.bogo ? ' (BOGO)' : ''}.`);
   setStatus(els.skuStatus, `Found ${data.count} variant(s).`, 'good');
   return variant;
 }
@@ -657,9 +802,11 @@ function renderOrderItems() {
       const val = Math.max(1, Number(qtyInput.value || 1));
       item.quantity = val;
       updateShippingCostDisplay();
+      addAuditEntry('line_item_qty', `Updated qty for ${item.sku || item.variantId || 'item'} to ${val}.`);
     });
     const removeBtn = tr.querySelector('button');
     removeBtn.addEventListener('click', () => {
+      addAuditEntry('line_item_remove', `Removed ${item.sku || item.variantId || 'item'} from cart.`);
       orderItems.splice(idx, 1);
       renderOrderItems();
     });
@@ -814,9 +961,7 @@ function formatFraudRecommendation(value) {
 function formatOrderDateTime(...values) {
   const raw = values.find((value) => String(value || '').trim());
   if (!raw) return '';
-  const parsed = new Date(raw);
-  if (Number.isNaN(parsed.getTime())) return '';
-  return parsed.toLocaleString();
+  return formatCentralDateTime(raw);
 }
 
 function renderOrders(orders, draftOrders) {
@@ -884,6 +1029,7 @@ function renderOrders(orders, draftOrders) {
     openBtn.addEventListener('click', async () => {
       try {
         const draftId = order.legacy_id || '';
+        addAuditEntry('draft_open', `Opening draft ${order.name || draftId || 'unknown'}.`);
         els.draftOrderId.value = draftId;
         setStatus(els.draftStatus, `Loading ${order.name || 'draft order'}...`, '');
         const data = await apiGet(`/draft_order_get?draft_order_id=${encodeURIComponent(draftId)}`);
@@ -944,9 +1090,11 @@ function renderOrders(orders, draftOrders) {
         renderOrderItems();
         updateShippingRestrictionWarning();
         setStatus(els.draftStatus, `Loaded ${order.name || 'draft order'} for editing.`, 'good');
+        addAuditEntry('draft_open_success', `Loaded draft ${order.name || draftId || 'unknown'} into cart.`);
         setActiveModule('order');
       } catch (err) {
         setStatus(els.draftStatus, err.message, 'bad');
+        addAuditEntry('draft_open_error', `Failed opening draft ${order.name || order.legacy_id || 'unknown'}: ${summarizeError(err)}`, { flushNow: true, reason: 'draft-open-error' });
       }
     });
 
@@ -1299,6 +1447,7 @@ function renderOrders(orders, draftOrders) {
 
     reorderBtn.addEventListener('click', async () => {
       try {
+        addAuditEntry('reorder_start', `Reorder initiated from ${order.name || order.legacy_id || 'order'}.`);
         setStatus(els.ordersStatus, `Loading line items from ${order.name || 'order'}...`, '');
         els.draftOrderId.value = '';
         setInvoiceUrl('');
@@ -1330,8 +1479,10 @@ function renderOrders(orders, draftOrders) {
         setDraftButtonState(false);
         setActiveModule('order');
         setStatus(els.ordersStatus, `Loaded ${orderItems.length} item(s) into cart from ${order.name || 'order'}.`, 'good');
+        addAuditEntry('reorder_success', `Loaded ${orderItems.length} item(s) from ${order.name || order.legacy_id || 'order'} into cart.`);
       } catch (err) {
         setStatus(els.ordersStatus, err.message, 'bad');
+        addAuditEntry('reorder_error', `Reorder failed for ${order.name || order.legacy_id || 'order'}: ${summarizeError(err)}`, { flushNow: true, reason: 'reorder-error' });
       }
     });
 
@@ -1339,10 +1490,12 @@ function renderOrders(orders, draftOrders) {
       try {
         const confirmed = window.confirm(`Put ${order.name || 'this order'} on hold?`);
         if (!confirmed) return;
+        addAuditEntry('order_hold', `Hold requested for ${order.name || order.legacy_id || 'order'}.`);
         setStatus(els.ordersStatus, `Putting ${order.name || 'order'} on hold...`, '');
         setStatus(els.ordersStatus, `Hold requested for ${order.name || 'order'}.`, 'good');
       } catch (err) {
         setStatus(els.ordersStatus, err.message, 'bad');
+        addAuditEntry('order_hold_error', `Hold failed for ${order.name || order.legacy_id || 'order'}: ${summarizeError(err)}`, { flushNow: true, reason: 'order-hold-error' });
       }
     });
 
@@ -1350,11 +1503,13 @@ function renderOrders(orders, draftOrders) {
       try {
         const confirmed = window.confirm(`Cancel ${order.name || 'this order'}? This cannot be undone.`);
         if (!confirmed) return;
+        addAuditEntry('order_cancel', `Cancel requested for ${order.name || order.legacy_id || 'order'}.`);
         setStatus(els.ordersStatus, `Canceling ${order.name || 'order'}...`, '');
         await apiPost('/order_cancel', { order_id: order.legacy_id || order.id });
         setStatus(els.ordersStatus, `Cancel requested for ${order.name || 'order'}.`, 'good');
       } catch (err) {
         setStatus(els.ordersStatus, err.message, 'bad');
+        addAuditEntry('order_cancel_error', `Cancel failed for ${order.name || order.legacy_id || 'order'}: ${summarizeError(err)}`, { flushNow: true, reason: 'order-cancel-error' });
       }
     });
 
@@ -1393,9 +1548,11 @@ function renderOrders(orders, draftOrders) {
         setStatus(els.ordersStatus, `Refunding ${order.name || 'order'}...`, '');
         await apiPost('/order_refund', { order_id: order.legacy_id || order.id, line_items: selected });
         setStatus(els.ordersStatus, `Refund requested for ${order.name || 'order'}.`, 'good');
+        addAuditEntry('order_refund', `Refund requested for ${order.name || order.legacy_id || 'order'} with ${selected.length} line item(s).`, { flushNow: true, reason: 'refund' });
         refundPanel.style.display = 'none';
       } catch (err) {
         setStatus(els.ordersStatus, err.message, 'bad');
+        addAuditEntry('order_refund_error', `Refund failed for ${order.name || order.legacy_id || 'order'}: ${summarizeError(err)}`, { flushNow: true, reason: 'refund-error' });
       }
     });
 
@@ -1431,14 +1588,17 @@ async function handleCustomerSelect(customer, allCustomers) {
   els.customerId.value = customer.id;
   renderCustomers(allCustomers, customer.id);
   setStatus(els.customerStatus, `Selected customer ${customer.id}. Fetching addresses and orders...`, '');
+  addAuditEntry('customer_select', `Selected customer ${customer.id} (${customer.email || 'no-email'}).`);
   try {
     const addressesData = await apiGet(`/customer_addresses?customer_id=${encodeURIComponent(customer.id)}`);
     lastAddresses = addressesData.addresses || [];
     renderAddresses(lastAddresses);
     setStatus(els.customerStatus, `Selected customer ${customer.id}. Loaded ${lastAddresses.length} address(es).`, 'good');
+    addAuditEntry('address_load', `Loaded ${lastAddresses.length} address(es) for customer ${customer.id}.`);
     await fetchOrdersForCustomer(customer.id);
   } catch (err) {
     setStatus(els.customerStatus, err.message, 'bad');
+    addAuditEntry('customer_select_error', `Customer ${customer.id} selection failed: ${summarizeError(err)}`, { flushNow: true, reason: 'customer-select-error' });
   }
 }
 
@@ -1486,22 +1646,27 @@ function setPromoResultStatus(promoCode, draftOrder, bogoOverride) {
   const normalized = String(promoCode || '').trim().toUpperCase();
   if (!normalized) {
     setStatus(els.promoStatus, 'No promo code applied.', '');
+    addAuditEntry('promo', 'No promo code applied on draft operation.');
     return;
   }
   const discountAmount = getDraftDiscountAmount(draftOrder);
   if (discountAmount > 0) {
     if (bogoOverride && normalized === 'INT999') {
       setStatus(els.promoStatus, `BOGO promo ${normalized} applied: -$${discountAmount.toFixed(2)}.`, 'good');
+      addAuditEntry('promo_applied', `BOGO promo ${normalized} applied with discount $${discountAmount.toFixed(2)}.`);
       return;
     }
     setStatus(els.promoStatus, `Promo ${normalized} applied: -$${discountAmount.toFixed(2)}.`, 'good');
+    addAuditEntry('promo_applied', `Promo ${normalized} applied with discount $${discountAmount.toFixed(2)}.`);
     return;
   }
   if (bogoOverride) {
     setStatus(els.promoStatus, 'BOGO cart forced promo INT999, but no discount was returned.', 'bad');
+    addAuditEntry('promo_missing', 'BOGO promo INT999 sent but no discount returned.');
     return;
   }
   setStatus(els.promoStatus, `Promo ${normalized} was sent, but no discount was returned for current items.`, 'bad');
+  addAuditEntry('promo_missing', `Promo ${normalized} sent but no discount returned.`);
 }
 
 function setShippingLineFromDraft(draftOrder) {
@@ -1590,13 +1755,30 @@ function attachButtonEffects(buttons) {
   });
 }
 
-els.addressSelect.addEventListener('change', updateAddressPreview);
+els.addressSelect.addEventListener('change', () => {
+  updateAddressPreview();
+  const idx = Number(els.addressSelect.value || 0);
+  const addr = lastAddresses[idx];
+  if (addr) {
+    const state = normalizeState(addr.provinceCode || addr.province || '');
+    addAuditEntry('address_select', `Selected shipping address index ${idx}${state ? ` (${state})` : ''}.`);
+  }
+});
 if (els.addressOverride) {
-  els.addressOverride.addEventListener('change', refreshUpdateButtonState);
+  els.addressOverride.addEventListener('change', () => {
+    refreshUpdateButtonState();
+    addAuditEntry('address_validation_override', `Address override ${els.addressOverride.checked ? 'enabled' : 'disabled'}.`);
+  });
 }
 if (els.email) {
   els.email.addEventListener('input', () => {
     userEditedEmail = true;
+  });
+}
+if (els.promoCode) {
+  els.promoCode.addEventListener('change', () => {
+    const code = String(els.promoCode.value || '').trim().toUpperCase();
+    addAuditEntry('promo_code_input', code ? `Promo code set to ${code}.` : 'Promo code cleared.');
   });
 }
 if (els.shippingSpeed) {
@@ -1605,10 +1787,14 @@ if (els.shippingSpeed) {
       els.freeShipping.checked = false;
     }
     updateShippingCostDisplay();
+    addAuditEntry('shipping_speed', `Shipping speed set to ${els.shippingSpeed.value || 'none'}.`);
   });
 }
 if (els.freeShipping) {
-  els.freeShipping.addEventListener('change', updateShippingCostDisplay);
+  els.freeShipping.addEventListener('change', () => {
+    updateShippingCostDisplay();
+    addAuditEntry('shipping_free_toggle', `Free shipping ${els.freeShipping.checked ? 'enabled' : 'disabled'}.`);
+  });
 }
 
 attachButtonEffects([
@@ -1625,12 +1811,24 @@ attachButtonEffects([
   els.navOrder,
 ]);
 
-if (els.navCustomer) els.navCustomer.addEventListener('click', () => setActiveModule('customer'));
-if (els.navOrders) els.navOrders.addEventListener('click', () => setActiveModule('orders'));
-if (els.navOrder) els.navOrder.addEventListener('click', () => setActiveModule('order'));
+if (els.navCustomer) els.navCustomer.addEventListener('click', () => {
+  setActiveModule('customer');
+  addAuditEntry('module_nav', 'Switched to Customer module.');
+});
+if (els.navOrders) els.navOrders.addEventListener('click', () => {
+  setActiveModule('orders');
+  addAuditEntry('module_nav', 'Switched to Orders module.');
+});
+if (els.navOrder) els.navOrder.addEventListener('click', () => {
+  setActiveModule('order');
+  addAuditEntry('module_nav', 'Switched to Cart module.');
+});
 
 if (els.btnCustomerNext) {
-  els.btnCustomerNext.addEventListener('click', () => setActiveModule('orders'));
+  els.btnCustomerNext.addEventListener('click', () => {
+    setActiveModule('orders');
+    addAuditEntry('module_nav', 'Advanced from Customer to Orders.');
+  });
 }
 
 
@@ -1645,6 +1843,7 @@ els.btnNoEmail.addEventListener('click', () => {
   const email = normalizePhoneToEmail(els.newCustomerPhone.value);
   if (email) {
     els.newCustomerEmail.value = email;
+    addAuditEntry('customer_email_autofill', 'Generated email from phone for new customer.');
   }
 });
 
@@ -1666,6 +1865,7 @@ els.btnCreateCustomer.addEventListener('click', async () => {
     const customer = data.customer;
     if (!customer?.id) throw new Error('Customer create failed');
     setStatus(els.newCustomerStatus, `Created customer ${customer.id}.`, 'good');
+    addAuditEntry('customer_create', `Created customer ${customer.id} (${customer.email || rawEmail || 'no-email'}).`, { flushNow: true, reason: 'customer-create' });
     els.customerId.value = customer.id;
     handleCustomerSelect(customer, [customer]);
   } catch (err) {
@@ -1681,6 +1881,7 @@ els.btnCreateCustomer.addEventListener('click', async () => {
         const data = await apiGet(`/search?${params.toString()}`);
         renderCustomers(data.customers || []);
         setStatus(els.newCustomerStatus, 'Found existing customer with this phone. Click to select.', 'good');
+        addAuditEntry('customer_create_dedupe', `Phone already existed; rendered ${data.customers?.length || 0} matching customer(s).`);
         return;
       } catch (searchErr) {
         setStatus(els.newCustomerStatus, searchErr.message, 'bad');
@@ -1694,6 +1895,7 @@ els.btnCreateCustomer.addEventListener('click', async () => {
         const data = await apiGet(`/search?${params.toString()}`);
         renderCustomers(data.customers || []);
         setStatus(els.newCustomerStatus, 'Found existing customer with this email. Click to select.', 'good');
+        addAuditEntry('customer_create_dedupe', `Email already existed; rendered ${data.customers?.length || 0} matching customer(s).`);
         return;
       } catch (searchErr) {
         setStatus(els.newCustomerStatus, searchErr.message, 'bad');
@@ -1701,6 +1903,7 @@ els.btnCreateCustomer.addEventListener('click', async () => {
       }
     }
     setStatus(els.newCustomerStatus, err.message, 'bad');
+    addAuditEntry('customer_create_error', `Customer create failed: ${summarizeError(err)}`, { flushNow: true, reason: 'customer-create-error' });
   }
 });
 
@@ -1722,6 +1925,17 @@ async function runCustomerSearch() {
     if (phone) params.set('phone', phone);
     if (tags) params.set('tags', tags);
     if (swansonId) params.set('swanson_id', swansonId);
+    addAuditEntry(
+      'customer_search',
+      `Search initiated with fields: ${[
+        firstName && 'first_name',
+        lastName && 'last_name',
+        email && 'email',
+        phone && 'phone',
+        tags && 'tags',
+        swansonId && 'swanson_id',
+      ].filter(Boolean).join(', ') || 'none'}`
+    );
     const data = await apiGet(`/search?${params.toString()}`);
     lastSearchCustomers = data.customers || [];
     renderCustomers(lastSearchCustomers);
@@ -1749,9 +1963,11 @@ async function runCustomerSearch() {
     } else if (lastSearchCustomers.length === 1) {
       await handleCustomerSelect(lastSearchCustomers[0], lastSearchCustomers);
     }
+    addAuditEntry('customer_search_result', `Search returned ${data.count || 0} customer(s).`);
     setStatus(els.customerStatus, `Found ${data.count || 0} customer(s). Click a result to select.`, 'good');
   } catch (err) {
     setStatus(els.customerStatus, err.message, 'bad');
+    addAuditEntry('customer_search_error', `Search failed: ${summarizeError(err)}`, { flushNow: true, reason: 'customer-search-error' });
   }
 }
 
@@ -1783,6 +1999,7 @@ els.btnNewOrder.addEventListener('click', () => {
   setDraftButtonState(false);
   setActiveModule('order');
   setStatus(els.draftStatus, 'Starting a new order. Add SKUs below.', 'good');
+  addAuditEntry('draft_reset', 'Started a new order draft session.');
 });
 
 els.btnAddAddress.addEventListener('click', async () => {
@@ -1814,8 +2031,10 @@ els.btnAddAddress.addEventListener('click', async () => {
     lastAddresses = data.addresses || [];
     renderAddresses(lastAddresses);
     setStatus(els.addrStatus, 'Address list updated.', 'good');
+    addAuditEntry('address_create', `Added address for customer ${customerId}.`);
   } catch (err) {
     setStatus(els.addrStatus, err.message, 'bad');
+    addAuditEntry('address_create_error', `Address create failed: ${summarizeError(err)}`, { flushNow: true, reason: 'address-create-error' });
   }
 });
 
@@ -1831,9 +2050,11 @@ async function fetchOrdersForCustomer(customerId) {
     lastDraftOrders = data.draft_orders || [];
     renderCustomerProfile(data.profile || null);
     renderOrders(lastOrders, lastDraftOrders);
+    addAuditEntry('orders_load', `Loaded ${lastOrders.length} order(s) and ${lastDraftOrders.length} draft(s) for customer ${customerId}.`);
     setStatus(els.ordersStatus, `Loaded ${lastOrders.length} order(s), ${lastDraftOrders.length} draft order(s).`, 'good');
   } catch (err) {
     setStatus(els.ordersStatus, err.message, 'bad');
+    addAuditEntry('orders_load_error', `Failed loading orders for customer ${customerId}: ${summarizeError(err)}`, { flushNow: true, reason: 'orders-load-error' });
   }
 }
 
@@ -1841,6 +2062,7 @@ els.btnLookupSku.addEventListener('click', async () => {
   try {
     const query = els.sku.value.trim();
     if (!query) throw new Error('Search value required');
+    addAuditEntry('sku_search', `Lookup requested for query "${query}".`);
     const variant = await lookupSkuAndRender(query, { throwOnMissing: false });
     if (variant) {
       if (els.productResults) els.productResults.innerHTML = '';
@@ -1859,9 +2081,11 @@ els.btnLookupSku.addEventListener('click', async () => {
     const variants = data.variants || [];
     cacheSet(productSearchCache, cacheKey, variants);
     renderProductResults(variants);
+    addAuditEntry('product_search_result', `Product search "${query}" returned ${variants.length} variant(s).`);
     setStatus(els.skuStatus, `Found ${variants.length} variant(s).`, variants.length ? 'good' : '');
   } catch (err) {
     setStatus(els.skuStatus, err.message, 'bad');
+    addAuditEntry('sku_search_error', `Lookup failed for "${els.sku.value.trim()}": ${summarizeError(err)}`, { flushNow: true, reason: 'sku-search-error' });
   }
 });
 
@@ -1897,6 +2121,7 @@ els.btnAddSku.addEventListener('click', () => {
   renderOrderItems();
   updateShippingRestrictionWarning();
   setStatus(els.skuStatus, 'Added to order.', 'good');
+  addAuditEntry('line_item_add', `Added SKU ${lastVariant.sku || ''} qty ${qty}${lastVariant.bogo ? ' (BOGO)' : ''}.`);
 });
 
 els.btnCreateDraft.addEventListener('click', async () => {
@@ -1909,6 +2134,7 @@ els.btnCreateDraft.addEventListener('click', async () => {
     const addr = lastAddresses[addrIdx];
     const conflictState = getRestrictedShippingConflictState();
     if (conflictState) {
+      addAuditEntry('shipping_restriction_block', `Draft submit blocked due to restricted shipping state ${conflictState}.`, { flushNow: true, reason: 'shipping-restriction' });
       throw new Error(`One or more items cannot ship to ${conflictState}. Remove restricted items or choose a different address.`);
     }
 
@@ -1921,6 +2147,10 @@ els.btnCreateDraft.addEventListener('click', async () => {
     const hasBogoItems = orderItems.some((item) => item.bogo);
     const promoCode = hasBogoItems ? 'INT999' : getPromoCode();
     const shippingLine = getShippingLineInput();
+    addAuditEntry(
+      isUpdate ? 'draft_update_start' : 'draft_create_start',
+      `${isUpdate ? 'Updating' : 'Creating'} draft with ${orderItems.length} line item(s)${promoCode ? `, promo ${promoCode}` : ''}.`
+    );
 
     if (isUpdate) {
       const payload = {
@@ -1943,6 +2173,7 @@ els.btnCreateDraft.addEventListener('click', async () => {
       setShippingLineFromDraft(data.draft_order || null);
       applyAddressValidationState(data.draft_order || null);
       setStatus(els.draftStatus, `Draft order ${data.draft_order?.name || ''} updated.`, 'good');
+      addAuditEntry('draft_update_success', `Updated draft ${data.draft_order?.name || data.draft_order?.legacyResourceId || 'unknown'}.`, { flushNow: true, reason: 'draft-update' });
       return;
     }
 
@@ -1969,8 +2200,10 @@ els.btnCreateDraft.addEventListener('click', async () => {
     applyAddressValidationState(data.draft_order || null);
     setDraftButtonState(true);
     setStatus(els.draftStatus, `Draft order ${data.draft_order?.name || ''} created.`, 'good');
+    addAuditEntry('draft_create_success', `Created draft ${data.draft_order?.name || data.draft_order?.legacyResourceId || 'unknown'}.`, { flushNow: true, reason: 'draft-create' });
   } catch (err) {
     setStatus(els.draftStatus, err.message, 'bad');
+    addAuditEntry('draft_create_update_error', `Draft submit failed: ${summarizeError(err)}`, { flushNow: true, reason: 'draft-error' });
   }
 });
 
@@ -2049,8 +2282,25 @@ async function prefillRequesterAndSearch() {
   }
 }
 
-loadSettings().then(prefillRequesterAndSearch);
+loadSettings()
+  .then(async () => {
+    await initAuditContext();
+    await prefillRequesterAndSearch();
+  });
 setTimeout(() => { prefillActive = false; }, 3000);
+
+try {
+  client.on('ticket.save', () => {
+    flushAuditToInternalNote('ticket-save');
+    return true;
+  });
+} catch (err) {
+  console.warn('Unable to attach ticket.save audit hook', err);
+}
+
+window.addEventListener('beforeunload', () => {
+  flushAuditToInternalNote('page-unload');
+});
 
 function resizeToContent() {
   const height = Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);

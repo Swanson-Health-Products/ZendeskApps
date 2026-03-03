@@ -154,3 +154,26 @@ Executed: 2026-03-03 (post-deploy of latest iframe)
 
 Limitations for this delta pass:
 - Live data mutation tests (customer search/draft write) were not re-run in standalone iframe because app settings are injected in Zendesk context; standalone showed `Missing API key. Check app configuration.` which is expected outside normal embedded context.
+
+## Audit Log Regression (Internal Note)
+
+1. Session identity entry
+- Action:
+  - Open app in Zendesk ticket sidebar and wait for initialization.
+- Expected:
+  - Audit session entry includes signed-in Zendesk user name and user ID.
+  - Timestamp is in Central Time (`America/Chicago`, CST/CDT).
+
+2. CRUD and workflow entries
+- Action:
+  - Run customer search, select customer, add/remove SKU, create/update draft, and execute order actions (reorder/refund/cancel where available).
+- Expected:
+  - Internal note receives batched audit entries for each operation with clear event labels and identifiers (customer ID, order/draft IDs when present).
+  - Error paths (for example validation/restriction blocks) are included in audit entries.
+
+3. Flush behavior
+- Action:
+  - Trigger several events, then submit/save ticket.
+- Expected:
+  - Pending audit buffer flushes to internal note on ticket save.
+  - Entries remain readable and deduplicated (no rapid-repeat spam).
