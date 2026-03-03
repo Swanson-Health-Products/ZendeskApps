@@ -656,6 +656,53 @@ function renderOrderItems() {
   updateShippingCostDisplay();
 }
 
+function applyDraftDiscountsToCurrentItems(draftOrder) {
+  if (!draftOrder || !orderItems.length) return;
+
+  const draftLineItems = draftOrder.lineItems?.edges || [];
+  const draftByVariantId = new Map();
+  draftLineItems.forEach(({ node }) => {
+    const variantId = node?.variant?.id || '';
+    if (!variantId) return;
+    draftByVariantId.set(variantId, node);
+  });
+
+  orderItems = orderItems.map((item) => {
+    const draftNode = draftByVariantId.get(item.variantId);
+    const draftQty = Number(draftNode?.quantity || item.quantity || 1);
+    const lineDiscount = parseMoneyAmount(draftNode?.totalDiscountSet?.presentmentMoney?.amount);
+    const basePrice = parseMoneyAmount(item.original_price || item.price);
+    return {
+      ...item,
+      quantity: Number.isFinite(draftQty) && draftQty > 0 ? draftQty : item.quantity,
+      original_price: basePrice > 0 ? basePrice.toFixed(2) : item.original_price || item.price || '',
+      discount_total: lineDiscount > 0 ? lineDiscount.toFixed(2) : '',
+    };
+  });
+
+  const orderLevelDiscount = getDraftDiscountAmount(draftOrder);
+  const hasLineDiscounts = orderItems.some((item) => parseMoneyAmount(item.discount_total) > 0);
+  if (orderLevelDiscount > 0 && !hasLineDiscounts) {
+    const totalBase = orderItems.reduce((sum, item) => {
+      const unit = parseMoneyAmount(item.original_price || item.price);
+      const qty = Number(item.quantity || 1);
+      return sum + (Number.isFinite(qty) && qty > 0 ? unit * qty : 0);
+    }, 0);
+    if (totalBase > 0) {
+      orderItems = orderItems.map((item) => {
+        const unit = parseMoneyAmount(item.original_price || item.price);
+        const qty = Number(item.quantity || 1);
+        const safeQty = Number.isFinite(qty) && qty > 0 ? qty : 1;
+        const allocated = orderLevelDiscount * ((unit * safeQty) / totalBase);
+        return {
+          ...item,
+          discount_total: allocated > 0 ? allocated.toFixed(2) : item.discount_total,
+        };
+      });
+    }
+  }
+}
+
 async function enrichOrderItemsFromSkus(items) {
   const updated = [];
   let anyBogo = false;
@@ -742,6 +789,14 @@ function formatFraudRecommendation(value) {
   return formatStatusLabel(raw);
 }
 
+function formatOrderDateTime(...values) {
+  const raw = values.find((value) => String(value || '').trim());
+  if (!raw) return '';
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return '';
+  return parsed.toLocaleString();
+}
+
 function renderOrders(orders, draftOrders) {
   els.ordersList.innerHTML = '';
   const hasOrders = orders.length || draftOrders.length;
@@ -760,6 +815,8 @@ function renderOrders(orders, draftOrders) {
     const card = document.createElement('div');
     card.className = 'order-card';
     const items = order.line_items || [];
+    const draftCreated = formatOrderDateTime(order.created_at, order.createdAt);
+    const draftUpdated = formatOrderDateTime(order.updated_at, order.updatedAt);
     card.innerHTML = `
       <div class="order-header">
         <div>
@@ -767,6 +824,8 @@ function renderOrders(orders, draftOrders) {
           <div class="order-meta">
             <span class="pill">${order.status || 'OPEN'}</span>
             <span class="pill">${formatMoney(order.total, order.currency)}</span>
+            ${draftCreated ? `<span class="pill">Created: ${draftCreated}</span>` : ''}
+            ${draftUpdated ? `<span class="pill">Updated: ${draftUpdated}</span>` : ''}
           </div>
         </div>
         <div class="pill">Draft</div>
@@ -892,7 +951,8 @@ function renderOrders(orders, draftOrders) {
     const paymentStatus = formatStatusLabel(order.financial_status || '');
     const fraud = order.fraud_analysis || {};
     const fraudLevel = formatFraudLevel(fraud.level || '');
-    const processed = order.processed_at ? new Date(order.processed_at).toLocaleString() : '';
+    const processed = formatOrderDateTime(order.processed_at, order.processedAt);
+    const orderUpdated = formatOrderDateTime(order.updated_at, order.updatedAt);
     card.innerHTML = `
       <div class="order-header">
         <div>
@@ -903,6 +963,7 @@ function renderOrders(orders, draftOrders) {
             <span class="pill">Fraud: ${fraudLevel}</span>
             <span class="pill">${formatMoney(order.total, order.currency)}</span>
             ${processed ? `<span class="pill">Placed: ${processed}</span>` : ''}
+            ${orderUpdated ? `<span class="pill">Updated: ${orderUpdated}</span>` : ''}
             ${order.legacy_id ? `<span class="pill">Order #: ${order.legacy_id}</span>` : ''}
           </div>
         </div>
@@ -1386,6 +1447,10 @@ function setPromoResultStatus(promoCode, draftOrder, bogoOverride) {
   }
   const discountAmount = getDraftDiscountAmount(draftOrder);
   if (discountAmount > 0) {
+    if (bogoOverride && normalized === 'INT999') {
+      setStatus(els.promoStatus, `BOGO promo ${normalized} applied: -$${discountAmount.toFixed(2)}.`, 'good');
+      return;
+    }
     setStatus(els.promoStatus, `Promo ${normalized} applied: -$${discountAmount.toFixed(2)}.`, 'good');
     return;
   }
@@ -1824,6 +1889,9 @@ els.btnCreateDraft.addEventListener('click', async () => {
       setInvoiceUrl(data.invoice_url || '');
       setTotals(data.draft_order || null);
       setPromoResultStatus(promoCode, data.draft_order || null, hasBogoItems);
+      applyDraftDiscountsToCurrentItems(data.draft_order || null);
+      renderOrderItems();
+      updateShippingRestrictionWarning();
       setShippingLineFromDraft(data.draft_order || null);
       applyAddressValidationState(data.draft_order || null);
       setStatus(els.draftStatus, `Draft order ${data.draft_order?.name || ''} updated.`, 'good');
@@ -1846,6 +1914,9 @@ els.btnCreateDraft.addEventListener('click', async () => {
     setInvoiceUrl(data.invoice_url || '');
     setTotals(data.draft_order || null);
     setPromoResultStatus(promoCode, data.draft_order || null, hasBogoItems);
+    applyDraftDiscountsToCurrentItems(data.draft_order || null);
+    renderOrderItems();
+    updateShippingRestrictionWarning();
     setShippingLineFromDraft(data.draft_order || null);
     applyAddressValidationState(data.draft_order || null);
     setDraftButtonState(true);
