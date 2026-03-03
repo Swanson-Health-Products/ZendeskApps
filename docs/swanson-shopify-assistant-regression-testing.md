@@ -93,7 +93,7 @@ Run non-destructive regression checks directly in the live app iframe through Ch
 - Case 5: PASS
 - Case 6: PASS
 - Case 7: PASS (no blocking Swanson app errors observed)
-- Case 8: Pending (run after deployment of promo-status UI change)
+- Case 8: PASS (`Promo CEO40SW applied: -$8.32.` observed on new draft `#D33270`)
 
 Notes:
 - Console warnings were primarily from `Shopify Premium for Zendesk` and platform integrations, not from `Swanson Shopify Assistant`.
