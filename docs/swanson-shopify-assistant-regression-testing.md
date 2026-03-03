@@ -178,3 +178,66 @@ Limitations for this delta pass:
 - Expected:
   - Pending audit buffer flushes to backend `/audit_log` on ticket save.
   - Entries remain deduplicated (no rapid-repeat spam).
+
+## Exhaustive Audit + Commerce Regression (2026-03-03, Chrome DevTools)
+
+Scope:
+- Live embedded app on `https://swansonhealthproducts.zendesk.com/agent/tickets/new/7`
+- App ID `1212333`
+- Agent: `Kevin Wolf (Zendesk ID: 43073653036691)`
+- Backend verification: API request/response + DynamoDB table `zendesk-shopify-assistant-audit-log`
+
+Executed flow:
+1. Customer module:
+- Clicked `Customer`
+- `Search` executed with prefilled email
+- `Select First Result`
+- `Next: Orders`
+
+2. Orders module:
+- Verified draft and order cards render with created/updated timestamps
+- Clicked first order expand toggle
+- Clicked `Reorder Items`
+- Clicked first draft `Open Draft`
+
+3. Cart module:
+- Verified promo discount display format includes strike-through original price and discounted price
+- Entered promo code `CEO40sw`
+- Set shipping speed `Standard Shipping`
+- Toggled `Free Shipping`
+- Created draft order (observed `Draft order #D33626 created.`)
+- Searched SKU `SWA030` and verified `BOGO` badge on lookup result
+- Added SKU and verified cart row `Epic Pro 25-Strain Probiotic (BOGO)` with qty `2`
+- Updated draft order (observed `Draft order #D33626 updated.`)
+- Verified BOGO promo status text (`BOGO promo INT999 applied: -$26.89.`)
+
+Network/API evidence:
+- Successful audit flush observed:
+  - `POST .../prod/audit_log` status `200` (reqid `25812`)
+  - Response: `{"ok":true,"stored":6,"mode":"dynamodb","table":"zendesk-shopify-assistant-audit-log"}`
+- Request payload included expected recent event sequence:
+  - `sku_search`
+  - `sku_lookup_hit`
+  - `line_item_add`
+  - `draft_update_start`
+  - `promo_applied`
+  - `draft_update_success`
+
+DynamoDB evidence:
+- Queried `pk=TICKET#new_unsaved` in `us-east-1`
+- Confirmed persisted records for this run and actor:
+  - `customer_search`, `customer_select`, `address_load`, `orders_load`
+  - `draft_open`, `draft_open_success`
+  - `reorder_start`, `reorder_success`
+  - `promo_code_input`, `shipping_speed`, `shipping_free_toggle`
+  - `draft_create_start`, `promo_applied`, `draft_create_success`
+  - `sku_search`, `sku_lookup_hit`, `line_item_add`
+  - `draft_update_start`, `promo_applied`, `draft_update_success`
+
+Console sanity:
+- No blocking runtime errors attributed to `Swanson Shopify Assistant` during this run.
+- Existing warnings/errors were from Zendesk platform and other installed apps (not this app), consistent with prior runs.
+
+Restricted shipping validation status:
+- Guard logic remains present and unchanged in code path (`shipping_restriction_block` before draft submit).
+- A live restricted SKU/state combination was not available during this run, so the blocking path could not be triggered in production data.
