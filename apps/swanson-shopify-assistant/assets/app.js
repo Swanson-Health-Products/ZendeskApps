@@ -454,7 +454,7 @@ function hasRestrictedState(restricted, state) {
   return restricted.includes(state.toUpperCase());
 }
 
-function updateShippingRestrictionWarning() {
+function getCurrentShippingState() {
   const idx = Number(els.addressSelect.value || 0);
   const addr = lastAddresses[idx];
   let currentState = normalizeState(addr?.provinceCode || addr?.province || '');
@@ -467,6 +467,10 @@ function updateShippingRestrictionWarning() {
       currentState = normalizeState(statePart);
     }
   }
+  return currentState;
+}
+
+function getRestrictedStatesInCart() {
   const restrictedStates = new Set();
   const rows = Array.from(document.querySelectorAll('#orderItems tr[data-restricted]'));
   rows.forEach((row) => {
@@ -480,19 +484,25 @@ function updateShippingRestrictionWarning() {
       }
     });
   }
-  if (!currentState || !restrictedStates.size) {
+  return Array.from(restrictedStates.values());
+}
+
+function getRestrictedShippingConflictState() {
+  const currentState = getCurrentShippingState();
+  const restrictedStates = getRestrictedStatesInCart();
+  if (!currentState || !restrictedStates.length) return '';
+  return hasRestrictedState(restrictedStates, currentState) ? currentState : '';
+}
+
+function updateShippingRestrictionWarning() {
+  const conflictState = getRestrictedShippingConflictState();
+  if (!conflictState) {
     els.shipWarning.style.display = 'none';
     els.shipWarning.textContent = '';
     return;
   }
-  const restrictedList = Array.from(restrictedStates.values());
-  if (hasRestrictedState(restrictedList, currentState)) {
-    els.shipWarning.style.display = 'block';
-    els.shipWarning.textContent = `Caution: One or more items cannot ship to ${currentState}.`;
-  } else {
-    els.shipWarning.style.display = 'none';
-    els.shipWarning.textContent = '';
-  }
+  els.shipWarning.style.display = 'block';
+  els.shipWarning.textContent = `Caution: One or more items cannot ship to ${conflictState}.`;
 }
 
 function extractAddressValidationSummary(draftOrder) {
@@ -1897,6 +1907,10 @@ els.btnCreateDraft.addEventListener('click', async () => {
 
     const addrIdx = Number(els.addressSelect.value || 0);
     const addr = lastAddresses[addrIdx];
+    const conflictState = getRestrictedShippingConflictState();
+    if (conflictState) {
+      throw new Error(`One or more items cannot ship to ${conflictState}. Remove restricted items or choose a different address.`);
+    }
 
     const isUpdate = Boolean(els.draftOrderId.value.trim());
     if (isUpdate && currentAddressValidation.requiresOverride && !els.addressOverride?.checked) {
