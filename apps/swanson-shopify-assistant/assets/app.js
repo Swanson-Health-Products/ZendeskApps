@@ -294,18 +294,6 @@ function scheduleAuditFlush(delayMs = 15000) {
   }, delayMs);
 }
 
-async function appendSessionStartInternalNote() {
-  const when = formatCentralDateTime();
-  const agentLabel = `${auditState.actorName || 'Unknown Agent'}${auditState.actorId ? ` (Zendesk ID: ${auditState.actorId})` : ''}`;
-  const ticketLabel = auditState.ticketId ? String(auditState.ticketId) : 'new/unsaved';
-  const line = `[Swanson Shopify Assistant Session | ${when}] ${agentLabel} started app session on ticket ${ticketLabel}.${auditState.actorEmail ? ` (${auditState.actorEmail})` : ''}\n`;
-  try {
-    await client.invoke('ticket.comment.appendText', line);
-  } catch (err) {
-    console.warn('Session start note append failed', err);
-  }
-}
-
 async function flushAuditToBackend(reason) {
   if (!auditState.enabled || auditState.flushing || !auditState.entries.length) return;
   const pending = auditState.entries.splice(0, auditState.maxEntriesPerFlush);
@@ -367,7 +355,6 @@ async function initAuditContext() {
   } catch (err) {
     console.warn('Unable to initialize audit context', err);
   }
-  await appendSessionStartInternalNote();
   addAuditEntry(
     'session_start',
     `Session started by ${auditState.actorName || 'Unknown Agent'}${auditState.actorId ? ` (Zendesk ID ${auditState.actorId})` : ''}.`,
