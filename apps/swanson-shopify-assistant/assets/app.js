@@ -52,6 +52,12 @@ const els = {
   skuStatus: document.getElementById('skuStatus'),
   skuCard: document.getElementById('skuCard'),
   productResults: document.getElementById('productResults'),
+  btnUpsellToggle: document.getElementById('btnUpsellToggle'),
+  upsellToggleText: document.getElementById('upsellToggleText'),
+  upsellCaret: document.getElementById('upsellCaret'),
+  upsellPanel: document.getElementById('upsellPanel'),
+  upsellStatus: document.getElementById('upsellStatus'),
+  upsellList: document.getElementById('upsellList'),
   draftOrderId: document.getElementById('draftOrderId'),
   invoiceUrl: document.getElementById('invoiceUrl'),
   invoiceLink: document.getElementById('invoiceLink'),
@@ -87,9 +93,14 @@ let currentAddressValidation = { valid: true, requiresOverride: false, message: 
 let lastCustomerProfile = null;
 let syncingShippingUi = false;
 let lastRestrictionConflictState = '';
+let upsellExpanded = false;
+let upsellSuggestions = [];
+let upsellSuggestionVersion = 0;
 const productSearchCache = new Map();
 const productSearchCacheTtlMs = 2 * 60 * 1000;
 const productSearchCacheMaxEntries = 50;
+const upsellVariantCache = new Map();
+const upsellVariantCacheTtlMs = 5 * 60 * 1000;
 const draftMutationKeyTtlMs = 60 * 1000;
 let lastDraftMutationKey = { signature: '', key: '', ts: 0 };
 
@@ -812,6 +823,36 @@ async function lookupSkuAndRender(sku, options = {}) {
   return variant;
 }
 
+function addVariantToCart(variant, qty = 1, source = 'manual') {
+  if (!variant) return false;
+  let safeQty = Math.max(1, Number(qty || 1));
+  if (variant.bogo) {
+    safeQty = roundUpToEven(safeQty);
+    setAutoBogoPromoCode();
+  }
+  const existing = orderItems.find((item) => item.variantId === variant.id);
+  if (existing) {
+    existing.quantity = variant.bogo ? roundUpToEven(existing.quantity + safeQty) : existing.quantity + safeQty;
+  } else {
+    orderItems.push({
+      variantId: variant.id,
+      sku: variant.sku,
+      title: variant.product?.title || variant.title,
+      price: variant.price,
+      quantity: safeQty,
+      bogo: Boolean(variant.bogo),
+      inventory_quantity: variant.inventory_quantity ?? null,
+      image_url: variant.image_url || '',
+      image_alt: variant.image_alt || '',
+      restricted_states: parseRestrictedStates(variant.restricted_states || ''),
+    });
+  }
+  renderOrderItems();
+  updateShippingRestrictionWarning();
+  addAuditEntry('line_item_add', `Added SKU ${variant.sku || ''} qty ${safeQty}${variant.bogo ? ' (BOGO)' : ''} via ${source}.`);
+  return true;
+}
+
 function renderOrderItems() {
   els.orderItems.innerHTML = '';
   orderItems.forEach((item, idx) => {
@@ -854,6 +895,154 @@ function renderOrderItems() {
     els.orderItems.appendChild(tr);
   });
   updateShippingCostDisplay();
+  renderUpsellSuggestions();
+}
+
+function getCartSkuSet() {
+  const skus = new Set();
+  orderItems.forEach((item) => {
+    const sku = normalizeSku(item.sku);
+    if (sku) skus.add(sku);
+  });
+  return skus;
+}
+
+function getUpsellCandidatesFromOrders(limit = 24) {
+  const bySku = new Map();
+  lastOrders.forEach((order) => {
+    const orderTs = Date.parse(order.processed_at || order.updated_at || order.created_at || '') || 0;
+    const lines = Array.isArray(order.line_items) ? order.line_items : [];
+    lines.forEach((line) => {
+      const sku = normalizeSku(line.sku);
+      if (!sku) return;
+      const existing = bySku.get(sku) || {
+        sku,
+        title: line.title || '',
+        image_url: line.image_url || '',
+        image_alt: line.image_alt || '',
+        timesPurchased: 0,
+        lastPurchasedTs: 0,
+      };
+      existing.timesPurchased += Number(line.quantity || 1) > 0 ? 1 : 0;
+      existing.lastPurchasedTs = Math.max(existing.lastPurchasedTs, orderTs);
+      if (!existing.title && line.title) existing.title = line.title;
+      if (!existing.image_url && line.image_url) existing.image_url = line.image_url;
+      bySku.set(sku, existing);
+    });
+  });
+  return Array.from(bySku.values())
+    .sort((a, b) => (b.lastPurchasedTs - a.lastPurchasedTs) || (b.timesPurchased - a.timesPurchased))
+    .slice(0, limit);
+}
+
+async function getVariantForUpsellCandidate(candidate) {
+  const cacheKey = normalizeSku(candidate?.sku);
+  if (!cacheKey) return null;
+  const cached = cacheGet(upsellVariantCache, cacheKey, upsellVariantCacheTtlMs);
+  if (cached !== null) return cached;
+  try {
+    const data = await apiGet(`/sku_lookup?sku=${encodeURIComponent(cacheKey)}&limit=5&cb=${Date.now()}`);
+    const variant = data.variant || pickVariantBySku(data.variants || [], cacheKey);
+    cacheSet(upsellVariantCache, cacheKey, variant || null, 200);
+    return variant || null;
+  } catch (err) {
+    cacheSet(upsellVariantCache, cacheKey, null, 200);
+    return null;
+  }
+}
+
+function setUpsellExpanded(expanded) {
+  upsellExpanded = Boolean(expanded);
+  if (!els.upsellPanel || !els.btnUpsellToggle) return;
+  els.upsellPanel.style.display = upsellExpanded ? 'block' : 'none';
+  els.btnUpsellToggle.setAttribute('aria-expanded', String(upsellExpanded));
+  if (els.upsellCaret) els.upsellCaret.textContent = upsellExpanded ? '▾' : '▸';
+}
+
+function renderUpsellSuggestions() {
+  if (!els.upsellList || !els.upsellToggleText || !els.upsellStatus) return;
+  const cartSkus = getCartSkuSet();
+  const visible = upsellSuggestions.filter((item) => !cartSkus.has(normalizeSku(item.sku)));
+  els.upsellToggleText.textContent = `Upsell ideas (${visible.length})`;
+  if (!visible.length) {
+    els.upsellList.innerHTML = '<div class="upsell-empty">No in-stock prior purchases available outside the cart.</div>';
+    return;
+  }
+  const rows = visible.map((item) => {
+    const thumb = item.image_url ? `<img src="${item.image_url}" alt="${item.image_alt || ''}" />` : '<div class="pill">No image</div>';
+    const bogo = item.variant?.bogo ? '<span class="pill">BOGO</span>' : '';
+    const inventory = getInventoryBadge(item.variant?.inventory_quantity);
+    return `
+      <div class="upsell-row">
+        ${thumb}
+        <div>
+          <div class="upsell-title">${item.title || item.variant?.product?.title || item.sku}</div>
+          <div class="upsell-meta">
+            <span>${item.sku}</span>
+            <span>$${item.variant?.price || ''}</span>
+            <span>Bought before: ${item.timesPurchased || 1}x</span>
+            ${bogo}
+            ${inventory}
+          </div>
+        </div>
+        <button class="secondary btn-compact" data-upsell-sku="${item.sku}" type="button">Add</button>
+      </div>
+    `;
+  }).join('');
+  els.upsellList.innerHTML = rows;
+  Array.from(els.upsellList.querySelectorAll('button[data-upsell-sku]')).forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const sku = normalizeSku(btn.getAttribute('data-upsell-sku'));
+      if (!sku) return;
+      const suggestion = upsellSuggestions.find((item) => normalizeSku(item.sku) === sku);
+      if (!suggestion?.variant) return;
+      addVariantToCart(suggestion.variant, 1, 'upsell');
+      setStatus(els.skuStatus, `Added upsell SKU ${sku}.`, 'good');
+      renderUpsellSuggestions();
+    });
+  });
+}
+
+async function refreshUpsellSuggestions() {
+  if (!els.upsellStatus) return;
+  const version = ++upsellSuggestionVersion;
+  if (!lastOrders.length) {
+    upsellSuggestions = [];
+    setStatus(els.upsellStatus, 'Select a customer to load upsell ideas from prior orders.', '');
+    renderUpsellSuggestions();
+    return;
+  }
+  const candidates = getUpsellCandidatesFromOrders(24);
+  if (!candidates.length) {
+    upsellSuggestions = [];
+    setStatus(els.upsellStatus, 'No prior purchase history found for upsell.', '');
+    renderUpsellSuggestions();
+    return;
+  }
+
+  setStatus(els.upsellStatus, 'Building upsell ideas from prior purchases...', '');
+  const cartSkus = getCartSkuSet();
+  const suggestions = [];
+  for (const candidate of candidates) {
+    if (suggestions.length >= 10) break;
+    if (version !== upsellSuggestionVersion) return;
+    if (cartSkus.has(normalizeSku(candidate.sku))) continue;
+    const variant = await getVariantForUpsellCandidate(candidate);
+    if (!variant?.id) continue;
+    const inventory = Number(variant.inventory_quantity);
+    if (Number.isFinite(inventory) && inventory <= 0) continue;
+    suggestions.push({
+      ...candidate,
+      title: candidate.title || variant.product?.title || variant.title || candidate.sku,
+      image_url: candidate.image_url || variant.image_url || '',
+      image_alt: candidate.image_alt || variant.image_alt || '',
+      variant,
+    });
+  }
+  if (version !== upsellSuggestionVersion) return;
+  upsellSuggestions = suggestions;
+  setStatus(els.upsellStatus, suggestions.length ? `Found ${suggestions.length} upsell item(s).` : 'No in-stock upsell items found.', suggestions.length ? 'good' : '');
+  renderUpsellSuggestions();
 }
 
 function applyDraftDiscountsToCurrentItems(draftOrder) {
@@ -2003,6 +2192,9 @@ async function runCustomerSearch() {
     lastAddresses = [];
     renderAddresses(lastAddresses);
     renderCustomerProfile(null);
+    upsellSuggestions = [];
+    renderUpsellSuggestions();
+    setStatus(els.upsellStatus, 'Select a customer to load upsell ideas from prior orders.', '');
     els.shipPreview.value = '';
     autoSizeShipPreview();
     updateShippingRestrictionWarning();
@@ -2030,6 +2222,12 @@ if (els.btnSelectFirstCustomer) {
   els.btnSelectFirstCustomer.addEventListener('click', () => {
     if (!lastSearchCustomers.length) return;
     handleCustomerSelect(lastSearchCustomers[0], lastSearchCustomers);
+  });
+}
+
+if (els.btnUpsellToggle) {
+  els.btnUpsellToggle.addEventListener('click', () => {
+    setUpsellExpanded(!upsellExpanded);
   });
 }
 
@@ -2103,10 +2301,14 @@ async function fetchOrdersForCustomer(customerId) {
     lastDraftOrders = data.draft_orders || [];
     renderCustomerProfile(data.profile || null);
     renderOrders(lastOrders, lastDraftOrders);
+    refreshUpsellSuggestions();
     addAuditEntry('orders_load', `Loaded ${lastOrders.length} order(s) and ${lastDraftOrders.length} draft(s) for customer ${customerId}.`);
     setStatus(els.ordersStatus, `Loaded ${lastOrders.length} order(s), ${lastDraftOrders.length} draft order(s).`, 'good');
   } catch (err) {
     setStatus(els.ordersStatus, err.message, 'bad');
+    upsellSuggestions = [];
+    renderUpsellSuggestions();
+    setStatus(els.upsellStatus, 'Could not load upsell ideas.', 'bad');
     addAuditEntry('orders_load_error', `Failed loading orders for customer ${customerId}: ${summarizeError(err)}`, { flushNow: true, reason: 'orders-load-error' });
   }
 }
@@ -2149,32 +2351,9 @@ els.btnAddSku.addEventListener('click', () => {
     setStatus(els.skuStatus, 'Lookup a SKU first', 'bad');
     return;
   }
-  let qty = Math.max(1, Number(els.skuQty.value || 1));
-  if (lastVariant.bogo) {
-    qty = roundUpToEven(qty);
-    setAutoBogoPromoCode();
-  }
-  const existing = orderItems.find((item) => item.variantId === lastVariant.id);
-  if (existing) {
-    existing.quantity = lastVariant.bogo ? roundUpToEven(existing.quantity + qty) : existing.quantity + qty;
-  } else {
-    orderItems.push({
-      variantId: lastVariant.id,
-      sku: lastVariant.sku,
-      title: lastVariant.product?.title || lastVariant.title,
-      price: lastVariant.price,
-      quantity: qty,
-      bogo: Boolean(lastVariant.bogo),
-      inventory_quantity: lastVariant.inventory_quantity ?? null,
-      image_url: lastVariant.image_url || '',
-      image_alt: lastVariant.image_alt || '',
-      restricted_states: parseRestrictedStates(lastVariant.restricted_states || ''),
-    });
-  }
-  renderOrderItems();
-  updateShippingRestrictionWarning();
+  const qty = Math.max(1, Number(els.skuQty.value || 1));
+  addVariantToCart(lastVariant, qty, 'manual');
   setStatus(els.skuStatus, 'Added to order.', 'good');
-  addAuditEntry('line_item_add', `Added SKU ${lastVariant.sku || ''} qty ${qty}${lastVariant.bogo ? ' (BOGO)' : ''}.`);
 });
 
 els.btnCreateDraft.addEventListener('click', async () => {
@@ -2387,4 +2566,7 @@ updateShippingCostDisplay();
 renderCustomerProfile(null);
 applyAddressValidationState(null);
 setDraftButtonState(false);
+setUpsellExpanded(false);
+setStatus(els.upsellStatus, 'Select a customer to load upsell ideas from prior orders.', '');
+renderUpsellSuggestions();
 setActiveModule('customer');
