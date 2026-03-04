@@ -40,6 +40,7 @@ This repo does not include a unified build system. Use app- or Lambda-specific t
 There is no test harness in this repository. Validate changes via:
 
 - Zendesk app behavior in Agent Workspace (ticket sidebar + new ticket).
+- Chrome DevTools testing must be performed from the embedded app inside Zendesk Agent Workspace, not by opening app iframe URLs standalone.
 - Lambda responses via API Gateway (expects `200` with JSON body, or `4xx/5xx` on error).
 
 ## Commit & Pull Request Guidelines
