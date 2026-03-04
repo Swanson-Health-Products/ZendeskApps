@@ -16,6 +16,23 @@ Run non-destructive regression checks directly in the live app iframe through Ch
 - Apps panel open and `Swanson Shopify Assistant` expanded.
 - App settings already configured in Zendesk Admin.
 
+## Repeatable Execution Path
+
+Use a two-phase regression flow after each backend deploy:
+
+1. Automated backend smoke
+- Run:
+```powershell
+powershell -ExecutionPolicy Bypass -File C:\Users\kevin.wolf\ZendeskApps\scripts\run-shopify-assistant-regression.ps1
+```
+- Output:
+  - timestamped report in `docs/regression-artifacts/`
+  - non-zero exit code if any backend smoke case fails
+
+2. Embedded Zendesk E2E checks (manual via Chrome DevTools)
+- Run the `DevTools Regression Cases` below in the live ticket sidebar context.
+- Attach results/screenshots to the deployment note or issue comment.
+
 ## DevTools Regression Cases
 
 1. Iframe boot and module chrome

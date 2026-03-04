@@ -343,6 +343,16 @@ async function fetchCustomerProfile({ token, customerId }) {
         lastName
         email
         phone
+        defaultEmailAddress {
+          marketingState
+          marketingOptInLevel
+          marketingUpdatedAt
+        }
+        defaultPhoneNumber {
+          marketingState
+          marketingOptInLevel
+          marketingUpdatedAt
+        }
         numberOfOrders
         amountSpent {
           amount
@@ -429,6 +439,12 @@ async function fetchCustomerProfile({ token, customerId }) {
     .slice(0, 15);
 
   const recentOrder = orders[0] || null;
+  const emailMarketingStateRaw = String(customer.defaultEmailAddress?.marketingState || "").trim();
+  const smsMarketingStateRaw = String(customer.defaultPhoneNumber?.marketingState || "").trim();
+  const emailMarketingState = emailMarketingStateRaw ? emailMarketingStateRaw.toLowerCase() : "unknown";
+  const smsMarketingState = smsMarketingStateRaw ? smsMarketingStateRaw.toLowerCase() : "unknown";
+  const emailSubscribedStates = new Set(["SUBSCRIBED", "SUBSCRIBED_EXPLICITLY"]);
+  const smsSubscribedStates = new Set(["SUBSCRIBED"]);
   const profile = {
     id: customer.legacyResourceId || customer.id,
     first_name: customer.firstName || "",
@@ -440,9 +456,9 @@ async function fetchCustomerProfile({ token, customerId }) {
     currency: customer.amountSpent?.currencyCode || "USD",
     last_order_at: customer.lastOrder?.processedAt || customer.lastOrder?.createdAt || recentOrder?.processed_at || recentOrder?.created_at || null,
     last_order_name: customer.lastOrder?.name || recentOrder?.name || "",
-    email_marketing_state: "unknown",
-    sms_marketing_state: "unknown",
-    accepts_marketing: false,
+    email_marketing_state: emailMarketingState,
+    sms_marketing_state: smsMarketingState,
+    accepts_marketing: emailSubscribedStates.has(emailMarketingStateRaw) || smsSubscribedStates.has(smsMarketingStateRaw),
     subscriptions,
   };
 
