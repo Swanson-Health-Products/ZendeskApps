@@ -114,6 +114,31 @@
     .status { font-size: 13px; color: var(--muted); }
     .status.good { color: var(--good); }
     .status.bad { color: var(--bad); }
+    .status.progress {
+      font-weight: 700;
+      background: linear-gradient(100deg, #0f7a44 0%, #19a764 45%, #0f7a44 90%);
+      background-size: 220% 100%;
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      animation: status-shift 1.4s linear infinite;
+    }
+    button.is-working {
+      position: relative;
+      overflow: hidden;
+      background: linear-gradient(110deg, #0f7a44 0%, #19a764 45%, #0f7a44 100%);
+      background-size: 220% 100%;
+      animation: button-shift 1.2s linear infinite;
+      color: #fff;
+    }
+    @keyframes status-shift {
+      from { background-position: 0% 50%; }
+      to { background-position: 100% 50%; }
+    }
+    @keyframes button-shift {
+      from { background-position: 0% 50%; }
+      to { background-position: 100% 50%; }
+    }
     .list { margin: 0; padding: 0; list-style: none; }
     .list li { padding: 8px 0; border-bottom: 1px dashed var(--border); }
     .customer-profile {

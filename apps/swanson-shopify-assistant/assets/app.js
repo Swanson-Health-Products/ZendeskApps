@@ -96,6 +96,7 @@ let lastRestrictionConflictState = '';
 let upsellExpanded = false;
 let upsellSuggestions = [];
 let upsellSuggestionVersion = 0;
+let draftSubmitInFlight = false;
 const productSearchCache = new Map();
 const productSearchCacheTtlMs = 2 * 60 * 1000;
 const productSearchCacheMaxEntries = 50;
@@ -2018,10 +2019,26 @@ function updateShippingCostDisplay() {
 function setDraftButtonState(isUpdate) {
   if (!els.btnCreateDraft) return;
   els.btnCreateDraft.textContent = isUpdate ? 'Update Draft Order' : 'Create Draft Order';
+  els.btnCreateDraft.classList.remove('is-working');
+  els.btnCreateDraft.removeAttribute('aria-busy');
   if (!isUpdate && els.addressOverride) {
     els.addressOverride.checked = false;
   }
   refreshUpdateButtonState();
+}
+
+function setDraftWorkingState(isWorking, isUpdate) {
+  if (!els.btnCreateDraft) return;
+  if (isWorking) {
+    draftSubmitInFlight = true;
+    els.btnCreateDraft.disabled = true;
+    els.btnCreateDraft.classList.add('is-working');
+    els.btnCreateDraft.setAttribute('aria-busy', 'true');
+    els.btnCreateDraft.textContent = isUpdate ? 'Updating Draft...' : 'Creating Draft...';
+    return;
+  }
+  draftSubmitInFlight = false;
+  setDraftButtonState(Boolean(els.draftOrderId?.value?.trim()));
 }
 
 function getPromoCode() {
@@ -2421,7 +2438,12 @@ els.btnAddSku.addEventListener('click', () => {
 });
 
 els.btnCreateDraft.addEventListener('click', async () => {
+  let submitStarted = false;
   try {
+    if (draftSubmitInFlight) {
+      setStatus(els.draftStatus, 'Draft request already in progress...', 'progress');
+      return;
+    }
     const customerId = els.customerId.value.trim();
     if (!customerId) throw new Error('Customer ID required');
     if (!orderItems.length) throw new Error('Add at least one SKU');
@@ -2438,7 +2460,9 @@ els.btnCreateDraft.addEventListener('click', async () => {
     if (isUpdate && currentAddressValidation.requiresOverride && !els.addressOverride?.checked) {
       throw new Error('Address validation requires override to update this draft order.');
     }
-    setStatus(els.draftStatus, isUpdate ? 'Updating draft order...' : 'Creating draft order...', '');
+    setDraftWorkingState(true, isUpdate);
+    submitStarted = true;
+    setStatus(els.draftStatus, isUpdate ? 'Updating draft order...' : 'Creating draft order...', 'progress');
 
     const hasBogoItems = orderItems.some((item) => item.bogo);
     const promoCode = getPromoCode();
@@ -2513,6 +2537,10 @@ els.btnCreateDraft.addEventListener('click', async () => {
   } catch (err) {
     setStatus(els.draftStatus, err.message, 'bad');
     addAuditEntry('draft_create_update_error', `Draft submit failed: ${summarizeError(err)}`, { flushNow: true, reason: 'draft-error' });
+  } finally {
+    if (submitStarted) {
+      setDraftWorkingState(false, false);
+    }
   }
 });
 
