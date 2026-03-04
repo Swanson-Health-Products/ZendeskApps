@@ -1676,12 +1676,28 @@ function setPromoResultStatus(promoCode, draftOrder, bogoOverride) {
   if (!els.promoStatus) return;
   const normalized = String(promoCode || '').trim().toUpperCase();
   if (!normalized) {
+    if (bogoOverride) {
+      const discountAmount = getDraftDiscountAmount(draftOrder);
+      if (discountAmount > 0) {
+        setStatus(els.promoStatus, `BOGO promo INT999 applied: -$${discountAmount.toFixed(2)}.`, 'good');
+        addAuditEntry('promo_applied', `BOGO promo INT999 applied with discount $${discountAmount.toFixed(2)}.`);
+      } else {
+        setStatus(els.promoStatus, 'BOGO promo INT999 was sent, but no discount was returned.', 'bad');
+        addAuditEntry('promo_missing', 'BOGO promo INT999 sent but no discount returned.');
+      }
+      return;
+    }
     setStatus(els.promoStatus, 'No promo code applied.', '');
     addAuditEntry('promo', 'No promo code applied on draft operation.');
     return;
   }
   const discountAmount = getDraftDiscountAmount(draftOrder);
   if (discountAmount > 0) {
+    if (bogoOverride && normalized !== 'INT999') {
+      setStatus(els.promoStatus, `Promo ${normalized} applied with BOGO handling: -$${discountAmount.toFixed(2)}.`, 'good');
+      addAuditEntry('promo_applied', `Promo ${normalized} applied with BOGO handling, discount $${discountAmount.toFixed(2)}.`);
+      return;
+    }
     if (bogoOverride && normalized === 'INT999') {
       setStatus(els.promoStatus, `BOGO promo ${normalized} applied: -$${discountAmount.toFixed(2)}.`, 'good');
       addAuditEntry('promo_applied', `BOGO promo ${normalized} applied with discount $${discountAmount.toFixed(2)}.`);
@@ -1692,8 +1708,8 @@ function setPromoResultStatus(promoCode, draftOrder, bogoOverride) {
     return;
   }
   if (bogoOverride) {
-    setStatus(els.promoStatus, 'BOGO promo INT999 was sent, but no discount was returned.', 'bad');
-    addAuditEntry('promo_missing', 'BOGO promo INT999 sent but no discount returned.');
+    setStatus(els.promoStatus, `Promo ${normalized} and BOGO handling were sent, but no discount was returned for current items.`, 'bad');
+    addAuditEntry('promo_missing', `Promo ${normalized} with BOGO handling sent but no discount returned.`);
     return;
   }
   setStatus(els.promoStatus, `Promo ${normalized} was sent, but no discount was returned for current items.`, 'bad');
