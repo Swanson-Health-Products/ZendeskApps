@@ -1146,7 +1146,7 @@ async function applyBogoRules({ token, lineItems, discountCodes }) {
   });
 
   const codes = Array.isArray(discountCodes) ? [...discountCodes] : [];
-  if (needsBogo && !codes.includes("INT999")) {
+  if (needsBogo && !codes.length && !codes.includes("INT999")) {
     codes.push("INT999");
   }
 

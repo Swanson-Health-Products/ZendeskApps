@@ -779,7 +779,7 @@ async function lookupSkuAndRender(sku, options = {}) {
   els.variantPrice.value = variant.price || '';
   renderSkuCard(variant);
   if (variant.bogo) {
-    els.promoCode.value = 'INT999';
+    setAutoBogoPromoCode();
   }
   addAuditEntry('sku_lookup_hit', `Matched SKU ${variant.sku || sku}${variant.bogo ? ' (BOGO)' : ''}.`);
   setStatus(els.skuStatus, `Found ${data.count} variant(s).`, 'good');
@@ -1090,7 +1090,7 @@ function renderOrders(orders, draftOrders) {
         const enriched = await enrichOrderItemsFromSkus(orderItems);
         orderItems = enriched.items;
         if (enriched.anyBogo) {
-          els.promoCode.value = 'INT999';
+          setAutoBogoPromoCode();
         }
         renderOrderItems();
         updateShippingRestrictionWarning();
@@ -1477,7 +1477,7 @@ function renderOrders(orders, draftOrders) {
           throw new Error('No reorderable items found for this order.');
         }
         if (enriched.anyBogo) {
-          els.promoCode.value = 'INT999';
+          setAutoBogoPromoCode();
         }
         renderOrderItems();
         updateShippingRestrictionWarning();
@@ -1666,7 +1666,7 @@ function setPromoResultStatus(promoCode, draftOrder, bogoOverride) {
     return;
   }
   if (bogoOverride) {
-    setStatus(els.promoStatus, 'BOGO cart forced promo INT999, but no discount was returned.', 'bad');
+    setStatus(els.promoStatus, 'BOGO promo INT999 was sent, but no discount was returned.', 'bad');
     addAuditEntry('promo_missing', 'BOGO promo INT999 sent but no discount returned.');
     return;
   }
@@ -1732,6 +1732,12 @@ function setDraftButtonState(isUpdate) {
 function getPromoCode() {
   const code = els.promoCode.value.trim();
   return code || '';
+}
+
+function setAutoBogoPromoCode() {
+  if (!els.promoCode) return;
+  if (getPromoCode()) return;
+  els.promoCode.value = 'INT999';
 }
 
 function getShippingLineInput() {
@@ -2104,7 +2110,7 @@ els.btnAddSku.addEventListener('click', () => {
   let qty = Math.max(1, Number(els.skuQty.value || 1));
   if (lastVariant.bogo) {
     qty = roundUpToEven(qty);
-    els.promoCode.value = 'INT999';
+    setAutoBogoPromoCode();
   }
   const existing = orderItems.find((item) => item.variantId === lastVariant.id);
   if (existing) {
@@ -2150,7 +2156,7 @@ els.btnCreateDraft.addEventListener('click', async () => {
     setStatus(els.draftStatus, isUpdate ? 'Updating draft order...' : 'Creating draft order...', '');
 
     const hasBogoItems = orderItems.some((item) => item.bogo);
-    const promoCode = hasBogoItems ? 'INT999' : getPromoCode();
+    const promoCode = getPromoCode();
     const shippingLine = getShippingLineInput();
     addAuditEntry(
       isUpdate ? 'draft_update_start' : 'draft_create_start',
