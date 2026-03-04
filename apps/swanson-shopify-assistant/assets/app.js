@@ -907,6 +907,63 @@ function getCartSkuSet() {
   return skus;
 }
 
+function estimateServingsPerContainer(...parts) {
+  const source = parts
+    .map((part) => String(part || '').trim())
+    .filter(Boolean)
+    .join(' | ');
+  if (!source) return 0;
+
+  const matchers = [
+    /(\d{1,4})\s*(?:servings?|serves?)\b/i,
+    /(\d{1,4})\s*(?:capsules?|caps?|caplets?|softgels?|tablets?|tabs?|gummies?|chewables?|packets?|sachets?|count|ct)\b/i,
+    /\b(?:count|ct)\s*(\d{1,4})\b/i,
+  ];
+
+  for (const pattern of matchers) {
+    const match = source.match(pattern);
+    if (!match) continue;
+    const value = Number(match[1]);
+    if (Number.isFinite(value) && value > 0 && value <= 2000) return value;
+  }
+  return 0;
+}
+
+function getLowSupplyInsight(candidate) {
+  const lastPurchasedTs = Number(candidate?.lastPurchasedTs || 0);
+  if (!Number.isFinite(lastPurchasedTs) || lastPurchasedTs <= 0) return null;
+
+  const lastQuantity = Math.max(1, Number(candidate?.lastQuantity || 1));
+  const servingsPerContainer = estimateServingsPerContainer(
+    candidate?.title,
+    candidate?.variant?.title,
+    candidate?.variant?.product?.title,
+    candidate?.variant?.image_alt,
+    candidate?.image_alt
+  );
+  if (!servingsPerContainer) return null;
+
+  const daysSincePurchase = Math.floor((Date.now() - lastPurchasedTs) / (24 * 60 * 60 * 1000));
+  if (!Number.isFinite(daysSincePurchase) || daysSincePurchase < 0) return null;
+
+  const estimatedSupplyDays = servingsPerContainer * lastQuantity;
+  if (!Number.isFinite(estimatedSupplyDays) || estimatedSupplyDays <= 0) return null;
+
+  const startWindow = Math.max(0, estimatedSupplyDays - 7);
+  const endWindow = estimatedSupplyDays + 30;
+  if (daysSincePurchase < startWindow || daysSincePurchase > endWindow) return null;
+
+  const daysDelta = daysSincePurchase - estimatedSupplyDays;
+  const timingText = daysDelta >= 0
+    ? `${daysDelta} day${daysDelta === 1 ? '' : 's'} past estimate`
+    : `${Math.abs(daysDelta)} day${Math.abs(daysDelta) === 1 ? '' : 's'} before estimate`;
+
+  return {
+    text: `Likely getting low: est. ${estimatedSupplyDays}-day supply (${servingsPerContainer}/container x qty ${lastQuantity}), last bought ${daysSincePurchase} day${daysSincePurchase === 1 ? '' : 's'} ago (${timingText}).`,
+    urgent: daysDelta >= 14,
+  };
+}
+
 function getUpsellCandidatesFromOrders(limit = 24) {
   const bySku = new Map();
   lastOrders.forEach((order) => {
@@ -922,9 +979,14 @@ function getUpsellCandidatesFromOrders(limit = 24) {
         image_alt: line.image_alt || '',
         timesPurchased: 0,
         lastPurchasedTs: 0,
+        lastQuantity: 1,
       };
       existing.timesPurchased += Number(line.quantity || 1) > 0 ? 1 : 0;
-      existing.lastPurchasedTs = Math.max(existing.lastPurchasedTs, orderTs);
+      if (orderTs >= existing.lastPurchasedTs) {
+        existing.lastPurchasedTs = orderTs;
+        const qty = Number(line.quantity || 1);
+        existing.lastQuantity = Number.isFinite(qty) && qty > 0 ? qty : 1;
+      }
       if (!existing.title && line.title) existing.title = line.title;
       if (!existing.image_url && line.image_url) existing.image_url = line.image_url;
       bySku.set(sku, existing);
@@ -972,6 +1034,7 @@ function renderUpsellSuggestions() {
     const thumb = item.image_url ? `<img src="${item.image_url}" alt="${item.image_alt || ''}" />` : '<div class="pill">No image</div>';
     const bogo = item.variant?.bogo ? '<span class="pill">BOGO</span>' : '';
     const inventory = getInventoryBadge(item.variant?.inventory_quantity);
+    const lowSupply = getLowSupplyInsight(item);
     return `
       <div class="upsell-row">
         ${thumb}
@@ -984,6 +1047,7 @@ function renderUpsellSuggestions() {
             ${bogo}
             ${inventory}
           </div>
+          ${lowSupply ? `<div class="upsell-callout${lowSupply.urgent ? ' urgent' : ''}">${lowSupply.text}</div>` : ''}
         </div>
         <button class="secondary btn-compact" data-upsell-sku="${item.sku}" type="button">Add</button>
       </div>
