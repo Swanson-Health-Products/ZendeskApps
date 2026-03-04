@@ -89,6 +89,9 @@ let syncingShippingUi = false;
 let lastRestrictionConflictState = '';
 const productSearchCache = new Map();
 const productSearchCacheTtlMs = 2 * 60 * 1000;
+const productSearchCacheMaxEntries = 50;
+const draftMutationKeyTtlMs = 60 * 1000;
+let lastDraftMutationKey = { signature: '', key: '', ts: 0 };
 
 const client = ZAFClient.init();
 let settings = {};
@@ -392,7 +395,7 @@ async function apiGet(path) {
   }
 }
 
-async function apiPost(path, body) {
+async function apiPost(path, body, extraHeaders = {}) {
   ensureSettings();
   const url = buildProxyUrl(path);
   const shouldAuditFailure = !String(path || '').startsWith('/audit_log');
@@ -406,6 +409,7 @@ async function apiPost(path, body) {
       headers: {
         'X-Api-Key': settings.apiKey || '',
         'Accept': 'application/json',
+        ...extraHeaders,
       },
       data: JSON.stringify(body),
     });
@@ -571,6 +575,25 @@ function normalizeSku(value) {
   return String(value || '').trim().toUpperCase();
 }
 
+function generateRequestKey() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  return `req_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function getDraftMutationKey(operation, payload) {
+  const signature = JSON.stringify({ operation, payload });
+  const now = Date.now();
+  if (
+    lastDraftMutationKey.signature === signature &&
+    (now - lastDraftMutationKey.ts) <= draftMutationKeyTtlMs
+  ) {
+    return lastDraftMutationKey.key;
+  }
+  const key = generateRequestKey();
+  lastDraftMutationKey = { signature, key, ts: now };
+  return key;
+}
+
 function cacheGet(cache, key, ttlMs) {
   const entry = cache.get(key);
   if (!entry) return null;
@@ -581,8 +604,11 @@ function cacheGet(cache, key, ttlMs) {
   return entry.value;
 }
 
-function cacheSet(cache, key, value) {
+function cacheSet(cache, key, value, maxEntries = productSearchCacheMaxEntries) {
   cache.set(key, { value, ts: Date.now() });
+  if (cache.size <= maxEntries) return;
+  const oldestKey = cache.keys().next().value;
+  if (oldestKey !== undefined) cache.delete(oldestKey);
 }
 
 function pickVariantBySku(variants, sku) {
@@ -2174,17 +2200,24 @@ els.btnCreateDraft.addEventListener('click', async () => {
         payload.shipping_address = addr;
         payload.billing_same_as_shipping = true;
       }
-      const data = await apiPost('/draft_order_update', payload);
-      setInvoiceUrl(data.invoice_url || '');
-      setTotals(data.draft_order || null);
-      setPromoResultStatus(promoCode, data.draft_order || null, hasBogoItems);
-      applyDraftDiscountsToCurrentItems(data.draft_order || null);
+      const idempotencyKey = getDraftMutationKey('draft_order_update', payload);
+      payload.idempotency_key = idempotencyKey;
+      const data = await apiPost('/draft_order_update', payload, {
+        'Idempotency-Key': idempotencyKey,
+        'X-Idempotency-Key': idempotencyKey,
+      });
+      const draft = data?.draft_order || null;
+      setInvoiceUrl(data?.invoice_url || draft?.invoiceUrl || draft?.invoice_url || '');
+      setTotals(draft);
+      setPromoResultStatus(promoCode, draft, hasBogoItems);
+      applyDraftDiscountsToCurrentItems(draft);
       renderOrderItems();
       updateShippingRestrictionWarning();
-      setShippingLineFromDraft(data.draft_order || null);
-      applyAddressValidationState(data.draft_order || null);
-      setStatus(els.draftStatus, `Draft order ${data.draft_order?.name || ''} updated.`, 'good');
-      addAuditEntry('draft_update_success', `Updated draft ${data.draft_order?.name || data.draft_order?.legacyResourceId || 'unknown'}.`, { flushNow: true, reason: 'draft-update' });
+      setShippingLineFromDraft(draft);
+      applyAddressValidationState(draft);
+      els.draftOrderId.value = draft?.legacyResourceId || draft?.id || els.draftOrderId.value;
+      setStatus(els.draftStatus, `Draft order ${draft?.name || ''} updated.`, 'good');
+      addAuditEntry('draft_update_success', `Updated draft ${draft?.name || draft?.legacyResourceId || draft?.id || 'unknown'}.`, { flushNow: true, reason: 'draft-update' });
       return;
     }
 
@@ -2199,19 +2232,25 @@ els.btnCreateDraft.addEventListener('click', async () => {
       payload.shipping_address = addr;
       payload.billing_same_as_shipping = true;
     }
-    const data = await apiPost('/draft_order', payload);
-    els.draftOrderId.value = data.draft_order?.legacyResourceId || '';
-    setInvoiceUrl(data.invoice_url || '');
-    setTotals(data.draft_order || null);
-    setPromoResultStatus(promoCode, data.draft_order || null, hasBogoItems);
-    applyDraftDiscountsToCurrentItems(data.draft_order || null);
+    const idempotencyKey = getDraftMutationKey('draft_order_create', payload);
+    payload.idempotency_key = idempotencyKey;
+    const data = await apiPost('/draft_order', payload, {
+      'Idempotency-Key': idempotencyKey,
+      'X-Idempotency-Key': idempotencyKey,
+    });
+    const draft = data?.draft_order || null;
+    els.draftOrderId.value = draft?.legacyResourceId || draft?.id || '';
+    setInvoiceUrl(data?.invoice_url || draft?.invoiceUrl || draft?.invoice_url || '');
+    setTotals(draft);
+    setPromoResultStatus(promoCode, draft, hasBogoItems);
+    applyDraftDiscountsToCurrentItems(draft);
     renderOrderItems();
     updateShippingRestrictionWarning();
-    setShippingLineFromDraft(data.draft_order || null);
-    applyAddressValidationState(data.draft_order || null);
+    setShippingLineFromDraft(draft);
+    applyAddressValidationState(draft);
     setDraftButtonState(true);
-    setStatus(els.draftStatus, `Draft order ${data.draft_order?.name || ''} created.`, 'good');
-    addAuditEntry('draft_create_success', `Created draft ${data.draft_order?.name || data.draft_order?.legacyResourceId || 'unknown'}.`, { flushNow: true, reason: 'draft-create' });
+    setStatus(els.draftStatus, `Draft order ${draft?.name || ''} created.`, 'good');
+    addAuditEntry('draft_create_success', `Created draft ${draft?.name || draft?.legacyResourceId || draft?.id || 'unknown'}.`, { flushNow: true, reason: 'draft-create' });
   } catch (err) {
     setStatus(els.draftStatus, err.message, 'bad');
     addAuditEntry('draft_create_update_error', `Draft submit failed: ${summarizeError(err)}`, { flushNow: true, reason: 'draft-error' });

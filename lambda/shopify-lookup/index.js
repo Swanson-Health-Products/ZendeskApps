@@ -12,6 +12,12 @@ const SWANSON_SCAN_PAGE_SIZE = Number(process.env.SWANSON_SCAN_PAGE_SIZE || 50);
 const SWANSON_SCAN_MAX_PAGES = Number(process.env.SWANSON_SCAN_MAX_PAGES || 20);
 const AUDIT_LOG_TABLE = String(process.env.AUDIT_LOG_TABLE || "").trim();
 const AUDIT_LOG_TTL_DAYS = Number(process.env.AUDIT_LOG_TTL_DAYS || 90);
+const SHOPIFY_HTTP_TIMEOUT_MS = Number(process.env.SHOPIFY_HTTP_TIMEOUT_MS || 15000);
+const SHOPIFY_GRAPHQL_MAX_RETRIES = Number(process.env.SHOPIFY_GRAPHQL_MAX_RETRIES || 3);
+const SHOPIFY_GRAPHQL_RETRY_BASE_MS = Number(process.env.SHOPIFY_GRAPHQL_RETRY_BASE_MS || 250);
+const SHOPIFY_GRAPHQL_RETRY_MAX_MS = Number(process.env.SHOPIFY_GRAPHQL_RETRY_MAX_MS || 4000);
+const BOGO_VARIANT_PRICING_CACHE_TTL_MS = Number(process.env.BOGO_VARIANT_PRICING_CACHE_TTL_MS || (5 * 60 * 1000));
+const DRAFT_CREATE_IDEMPOTENCY_TTL_MS = Number(process.env.DRAFT_CREATE_IDEMPOTENCY_TTL_MS || (10 * 60 * 1000));
 
 const secretsManager = new SecretsManagerClient({});
 const dynamoDbClient = new DynamoDBClient({});
@@ -23,6 +29,8 @@ const documentClient = DynamoDBDocumentClient.from(dynamoDbClient, {
 
 let cachedToken = null;
 let cachedTokenFetchedAt = 0;
+const variantPricingCache = new Map();
+const draftCreateIdempotencyCache = new Map();
 
 function respond(statusCode, body, extraHeaders = {}) {
   return {
@@ -51,11 +59,58 @@ function httpsRequest(options, body) {
       });
     });
     req.on("error", reject);
+    req.setTimeout(SHOPIFY_HTTP_TIMEOUT_MS, () => {
+      const err = new Error(`Shopify request timed out after ${SHOPIFY_HTTP_TIMEOUT_MS}ms`);
+      err.code = "ETIMEDOUT";
+      req.destroy(err);
+    });
     if (body) {
       req.write(body);
     }
     req.end();
   });
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseRetryAfterMs(headers = {}) {
+  const raw = headers["retry-after"] || headers["Retry-After"];
+  if (!raw) return null;
+  const asNum = Number(raw);
+  if (Number.isFinite(asNum) && asNum >= 0) {
+    return asNum * 1000;
+  }
+  const parsedDate = Date.parse(raw);
+  if (!Number.isNaN(parsedDate)) {
+    return Math.max(0, parsedDate - Date.now());
+  }
+  return null;
+}
+
+function isRetriableHttpStatus(status) {
+  return status === 408 || status === 429 || status === 500 || status === 502 || status === 503 || status === 504;
+}
+
+function isRetriableNetworkError(err) {
+  const code = String(err?.code || "").toUpperCase();
+  return ["ETIMEDOUT", "ECONNRESET", "EAI_AGAIN", "ENOTFOUND", "ECONNREFUSED", "EPIPE"].includes(code);
+}
+
+function shouldRetryGraphqlErrors(errors) {
+  if (!Array.isArray(errors) || !errors.length) return false;
+  const text = JSON.stringify(errors).toLowerCase();
+  return text.includes("throttled") || text.includes("timeout") || text.includes("internal") || text.includes("temporar");
+}
+
+function computeBackoffMs(attempt, retryAfterMs = null) {
+  if (Number.isFinite(retryAfterMs) && retryAfterMs >= 0) {
+    return Math.min(SHOPIFY_GRAPHQL_RETRY_MAX_MS, Math.max(100, retryAfterMs));
+  }
+  const exp = SHOPIFY_GRAPHQL_RETRY_BASE_MS * (2 ** Math.max(0, attempt - 1));
+  const jitter = Math.floor(Math.random() * Math.max(50, SHOPIFY_GRAPHQL_RETRY_BASE_MS));
+  return Math.min(SHOPIFY_GRAPHQL_RETRY_MAX_MS, exp + jitter);
 }
 
 function buildOptionsFromUrl(url, baseOptions) {
@@ -1093,8 +1148,23 @@ async function createCustomer({ token, name, email, phone }) {
 }
 
 async function fetchVariantPricing({ token, variantIds }) {
-  const ids = (variantIds || []).filter(Boolean);
+  const ids = Array.from(new Set((variantIds || []).map((id) => toVariantGid(id)).filter(Boolean)));
   if (!ids.length) return { pricing: new Map() };
+
+  const now = Date.now();
+  const pricing = new Map();
+  const cacheMissIds = [];
+  ids.forEach((id) => {
+    const cached = variantPricingCache.get(id);
+    if (cached && cached.expiresAt > now) {
+      pricing.set(id, cached.value);
+    } else {
+      variantPricingCache.delete(id);
+      cacheMissIds.push(id);
+    }
+  });
+
+  if (!cacheMissIds.length) return { pricing };
 
   const graphqlQuery = `
     query($ids: [ID!]!) {
@@ -1111,17 +1181,25 @@ async function fetchVariantPricing({ token, variantIds }) {
 
   const payload = JSON.stringify({
     query: graphqlQuery,
-    variables: { ids },
+    variables: { ids: cacheMissIds },
   });
 
   const { error, data } = await shopifyGraphqlRequest({ token, payload });
   if (error) return { error };
 
-  const pricing = new Map();
   const nodes = data?.data?.nodes || [];
+  const seen = new Set();
   nodes.forEach((node) => {
     if (!node || !node.id) return;
-    pricing.set(node.id, node.metafield?.value || "");
+    const value = node.metafield?.value || "";
+    pricing.set(node.id, value);
+    variantPricingCache.set(node.id, { value, expiresAt: now + BOGO_VARIANT_PRICING_CACHE_TTL_MS });
+    seen.add(node.id);
+  });
+  cacheMissIds.forEach((id) => {
+    if (seen.has(id)) return;
+    pricing.set(id, "");
+    variantPricingCache.set(id, { value: "", expiresAt: now + BOGO_VARIANT_PRICING_CACHE_TTL_MS });
   });
 
   return { pricing };
@@ -1331,37 +1409,73 @@ async function refundOrder({ token, orderId, lineItemsInput }) {
 }
 
 async function shopifyGraphqlRequest({ token, payload }) {
-  const { status, body } = await httpsRequest(
-    {
-      method: "POST",
-      hostname: `${STORE}.myshopify.com`,
-      path: `/admin/api/${API_VERSION}/graphql.json`,
-      headers: {
-        "X-Shopify-Access-Token": token,
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-        "Content-Length": Buffer.byteLength(payload),
-      },
-    },
-    payload
-  );
+  let lastError = null;
+  const maxAttempts = Math.max(1, SHOPIFY_GRAPHQL_MAX_RETRIES + 1);
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      const { status, body, headers } = await httpsRequest(
+        {
+          method: "POST",
+          hostname: `${STORE}.myshopify.com`,
+          path: `/admin/api/${API_VERSION}/graphql.json`,
+          headers: {
+            "X-Shopify-Access-Token": token,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "Content-Length": Buffer.byteLength(payload),
+          },
+        },
+        payload
+      );
 
-  if (status < 200 || status >= 300) {
-    return { error: { status, body } };
+      if (status < 200 || status >= 300) {
+        if (attempt < maxAttempts && isRetriableHttpStatus(status)) {
+          await sleep(computeBackoffMs(attempt, parseRetryAfterMs(headers)));
+          continue;
+        }
+        return { error: { status, body } };
+      }
+
+      let data;
+      try {
+        data = JSON.parse(body || "{}");
+      } catch (err) {
+        lastError = { status: 502, body: "Invalid JSON from Shopify GraphQL" };
+        if (attempt < maxAttempts) {
+          await sleep(computeBackoffMs(attempt));
+          continue;
+        }
+        return { error: lastError };
+      }
+
+      if (Array.isArray(data.errors) && data.errors.length) {
+        const errorBody = JSON.stringify(data.errors).slice(0, 2000);
+        if (attempt < maxAttempts && shouldRetryGraphqlErrors(data.errors)) {
+          await sleep(computeBackoffMs(attempt, parseRetryAfterMs(headers)));
+          continue;
+        }
+        return { error: { status: 502, body: errorBody } };
+      }
+
+      const cost = data?.extensions?.cost || null;
+      if (cost?.throttleStatus) {
+        console.log(`[graphql_cost] requested=${cost.requestedQueryCost || 0} actual=${cost.actualQueryCost || 0} available=${cost.throttleStatus.currentlyAvailable || 0}`);
+      }
+      return { data };
+    } catch (err) {
+      lastError = {
+        status: 502,
+        body: String(err?.message || err || "Unknown GraphQL request error").slice(0, 2000),
+      };
+      if (attempt < maxAttempts && isRetriableNetworkError(err)) {
+        await sleep(computeBackoffMs(attempt));
+        continue;
+      }
+      return { error: lastError };
+    }
   }
 
-  let data;
-  try {
-    data = JSON.parse(body || "{}");
-  } catch (err) {
-    return { error: { status: 502, body: "Invalid JSON from Shopify GraphQL" } };
-  }
-
-  if (Array.isArray(data.errors) && data.errors.length) {
-    return { error: { status: 502, body: JSON.stringify(data.errors).slice(0, 2000) } };
-  }
-
-  return { data };
+  return { error: lastError || { status: 502, body: "Unknown GraphQL request failure" } };
 }
 
 function toCustomerGid(input) {
@@ -1441,33 +1555,7 @@ async function createDraftOrder({ token, input }) {
         draftOrder {
           id
           legacyResourceId
-          name
-          status
           invoiceUrl
-          subtotalPrice
-          totalPrice
-          totalTax
-          shippingAddress {
-            validationResultSummary
-          }
-          lineItems(first: 50) {
-            edges {
-              node {
-                id
-                quantity
-                variant {
-                  id
-                  sku
-                }
-                title
-              }
-            }
-          }
-          customer {
-            id
-            legacyResourceId
-            email
-          }
         }
         userErrors {
           field
@@ -1501,39 +1589,7 @@ async function updateDraftOrder({ token, id, input }) {
         draftOrder {
           id
           legacyResourceId
-          name
-          status
           invoiceUrl
-          subtotalPrice
-          totalPrice
-          totalTax
-          shippingAddress {
-            validationResultSummary
-          }
-          totalDiscountsSet {
-            presentmentMoney {
-              amount
-              currencyCode
-            }
-          }
-          lineItems(first: 50) {
-            edges {
-              node {
-                id
-                quantity
-                variant {
-                  id
-                  sku
-                }
-                title
-              }
-            }
-          }
-          customer {
-            id
-            legacyResourceId
-            email
-          }
         }
         userErrors {
           field
@@ -1640,6 +1696,77 @@ async function fetchDraftOrder({ token, id }) {
   if (error) return { error };
 
   return { draftOrder: data?.data?.draftOrder || null };
+}
+
+function normalizeIdempotencyKey(input) {
+  const key = String(input || "").trim();
+  if (!key) return "";
+  return key.toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 48);
+}
+
+function getDraftCreateIdempotencyKey({ event, body }) {
+  const headers = event?.headers || {};
+  return normalizeIdempotencyKey(
+    body?.idempotency_key
+      || body?.idempotencyKey
+      || headers["x-idempotency-key"]
+      || headers["X-Idempotency-Key"]
+      || ""
+  );
+}
+
+function pruneDraftCreateIdempotencyCache() {
+  const now = Date.now();
+  for (const [key, value] of draftCreateIdempotencyCache.entries()) {
+    if (!value || value.expiresAt <= now) {
+      draftCreateIdempotencyCache.delete(key);
+    }
+  }
+}
+
+function getCachedIdempotentDraftGid(cacheKey) {
+  if (!cacheKey) return "";
+  pruneDraftCreateIdempotencyCache();
+  const entry = draftCreateIdempotencyCache.get(cacheKey);
+  if (!entry || !entry.draftGid) return "";
+  return entry.draftGid;
+}
+
+function setCachedIdempotentDraftGid(cacheKey, draftGid) {
+  if (!cacheKey || !draftGid) return;
+  draftCreateIdempotencyCache.set(cacheKey, {
+    draftGid,
+    expiresAt: Date.now() + DRAFT_CREATE_IDEMPOTENCY_TTL_MS,
+  });
+}
+
+async function findExistingDraftByIdempotencyTag({ token, customerId, idempotencyTag }) {
+  if (!customerId || !idempotencyTag) return { draftOrder: null };
+  const query = `
+    query($query: String!) {
+      draftOrders(first: 25, query: $query, sortKey: UPDATED_AT, reverse: true) {
+        edges {
+          node {
+            id
+            tags
+          }
+        }
+      }
+    }
+  `;
+  const customerLegacyId = toCustomerLegacyId(customerId);
+  const queryParts = ["status:open"];
+  if (customerLegacyId) queryParts.push(`customer_id:${customerLegacyId}`);
+  const payload = JSON.stringify({
+    query,
+    variables: { query: queryParts.join(" ") },
+  });
+  const { error, data } = await shopifyGraphqlRequest({ token, payload });
+  if (error) return { error };
+  const edges = data?.data?.draftOrders?.edges || [];
+  const match = edges.find(({ node }) => Array.isArray(node?.tags) && node.tags.includes(idempotencyTag));
+  if (!match?.node?.id) return { draftOrder: null };
+  return fetchDraftOrder({ token, id: match.node.id });
 }
 
 function mapVariantNode(node) {
@@ -2168,14 +2295,52 @@ exports.handler = async (event) => {
         return respond(400, { error: "line_items must include variant_id" });
       }
 
+      const token = await getToken();
       const discountCodes = [];
       if (body.promo_code || body.promoCode) {
         const code = String(body.promo_code || body.promoCode || "").trim();
         if (code) discountCodes.push(code);
       }
 
+      const idempotencyKey = getDraftCreateIdempotencyKey({ event, body });
+      const fallbackFingerprint = crypto
+        .createHash("sha1")
+        .update(JSON.stringify({
+          customerId,
+          lineItems: normalizedLineItems,
+          discountCodes,
+          shippingLine: body.shipping_line || body.shippingLine || null,
+        }))
+        .digest("hex")
+        .slice(0, 24);
+      const idempotencyCacheKey = `${customerId}|${idempotencyKey || fallbackFingerprint}`;
+      const idempotencyTag = idempotencyKey ? `zd_idemp_${idempotencyKey}` : "";
+
+      const cachedDraftGid = getCachedIdempotentDraftGid(idempotencyCacheKey);
+      if (cachedDraftGid) {
+        const cachedResult = await fetchDraftOrder({ token, id: cachedDraftGid });
+        if (!cachedResult.error && cachedResult.draftOrder) {
+          return respond(200, {
+            draft_order: cachedResult.draftOrder,
+            invoice_url: cachedResult.draftOrder?.invoiceUrl || null,
+            idempotent_replay: true,
+          });
+        }
+      }
+      if (idempotencyTag) {
+        const existingResult = await findExistingDraftByIdempotencyTag({ token, customerId, idempotencyTag });
+        if (!existingResult.error && existingResult.draftOrder) {
+          setCachedIdempotentDraftGid(idempotencyCacheKey, existingResult.draftOrder.id);
+          return respond(200, {
+            draft_order: existingResult.draftOrder,
+            invoice_url: existingResult.draftOrder?.invoiceUrl || null,
+            idempotent_replay: true,
+          });
+        }
+      }
+
       const bogoResult = await applyBogoRules({
-        token: await getToken(),
+        token,
         lineItems: normalizedLineItems,
         discountCodes,
       });
@@ -2195,9 +2360,12 @@ exports.handler = async (event) => {
         lineItems: normalizedLineItems,
       };
 
-      if (body.note) input.note = body.note;
-      if (Array.isArray(body.tags) && body.tags.length) input.tags = body.tags;
-      if (body.email) input.email = body.email;
+      const deferredInput = {};
+      if (body.note) deferredInput.note = body.note;
+      if (body.email) deferredInput.email = body.email;
+      const mergedTags = Array.isArray(body.tags) && body.tags.length ? [...body.tags] : [];
+      if (idempotencyTag && !mergedTags.includes(idempotencyTag)) mergedTags.push(idempotencyTag);
+      if (mergedTags.length) deferredInput.tags = mergedTags.slice(0, 250);
       if (body.applied_discount || body.appliedDiscount) {
         input.appliedDiscount = body.applied_discount || body.appliedDiscount;
       } else if (bogoResult.discountCodes?.length) {
@@ -2208,9 +2376,19 @@ exports.handler = async (event) => {
       const shippingLine = normalizeShippingLineInput(body.shipping_line || body.shippingLine);
       if (shippingLine) input.shippingLine = shippingLine;
 
-      const token = await getToken();
       const result = await createDraftOrder({ token, input });
       if (result.error) {
+        if (idempotencyTag) {
+          const existingResult = await findExistingDraftByIdempotencyTag({ token, customerId, idempotencyTag });
+          if (!existingResult.error && existingResult.draftOrder) {
+            setCachedIdempotentDraftGid(idempotencyCacheKey, existingResult.draftOrder.id);
+            return respond(200, {
+              draft_order: existingResult.draftOrder,
+              invoice_url: existingResult.draftOrder?.invoiceUrl || null,
+              idempotent_replay: true,
+            });
+          }
+        }
         const status = result.error.status || 502;
         return respond(status, {
           error: "Shopify GraphQL error",
@@ -2239,9 +2417,39 @@ exports.handler = async (event) => {
         draftOrder = addressResult.draftOrder || draftOrder;
       }
 
+      if (draftOrder?.id && Object.keys(deferredInput).length) {
+        const deferredResult = await updateDraftOrder({
+          token,
+          id: draftOrder.id,
+          input: deferredInput,
+        });
+        if (deferredResult.error) {
+          const status = deferredResult.error.status || 502;
+          return respond(status, {
+            error: "Draft order created but deferred metadata update failed",
+            status,
+            body: String(deferredResult.error.body || "").slice(0, 2000),
+            draft_order_id: draftOrder?.legacyResourceId || null,
+            invoice_url: draftOrder?.invoiceUrl || null,
+          });
+        }
+        draftOrder = deferredResult.draftOrder || draftOrder;
+      }
+
+      let responseDraftOrder = draftOrder;
+      if (draftOrder?.id) {
+        const fetched = await fetchDraftOrder({ token, id: draftOrder.id });
+        if (!fetched.error && fetched.draftOrder) {
+          responseDraftOrder = fetched.draftOrder;
+        }
+      }
+      if (draftOrder?.id) {
+        setCachedIdempotentDraftGid(idempotencyCacheKey, draftOrder.id);
+      }
+
       return respond(200, {
-        draft_order: draftOrder,
-        invoice_url: draftOrder?.invoiceUrl || null,
+        draft_order: responseDraftOrder,
+        invoice_url: responseDraftOrder?.invoiceUrl || draftOrder?.invoiceUrl || null,
       });
     }
 
@@ -2346,10 +2554,18 @@ exports.handler = async (event) => {
         draftOrder = addressResult.draftOrder || draftOrder;
       }
 
+      let responseDraftOrder = draftOrder;
+      if (draftOrder?.id) {
+        const fetched = await fetchDraftOrder({ token, id: draftOrder.id });
+        if (!fetched.error && fetched.draftOrder) {
+          responseDraftOrder = fetched.draftOrder;
+        }
+      }
+
       console.log(`[draft_order_update] total ms=${Date.now() - tStart}`);
       return respond(200, {
-        draft_order: draftOrder,
-        invoice_url: draftOrder?.invoiceUrl || null,
+        draft_order: responseDraftOrder,
+        invoice_url: responseDraftOrder?.invoiceUrl || draftOrder?.invoiceUrl || null,
       });
     }
 
