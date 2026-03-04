@@ -1312,11 +1312,20 @@ function renderOrders(orders, draftOrders) {
       });
     });
     openBtn.addEventListener('click', async () => {
+      if (openBtn.classList.contains('is-working')) {
+        setStatus(els.draftStatus, 'Draft open already in progress...', 'progress');
+        return;
+      }
+      const originalOpenLabel = openBtn.textContent || 'Open Draft';
       try {
         const draftId = order.legacy_id || '';
         addAuditEntry('draft_open', `Opening draft ${order.name || draftId || 'unknown'}.`);
+        openBtn.disabled = true;
+        openBtn.classList.add('is-working');
+        openBtn.setAttribute('aria-busy', 'true');
+        openBtn.textContent = 'Opening...';
         els.draftOrderId.value = draftId;
-        setStatus(els.draftStatus, `Loading ${order.name || 'draft order'}...`, '');
+        setStatus(els.draftStatus, `Loading ${order.name || 'draft order'}...`, 'progress');
         const data = await apiGet(`/draft_order_get?draft_order_id=${encodeURIComponent(draftId)}`);
         const draft = data.draft_order || {};
         setInvoiceUrl(draft.invoiceUrl || order.invoice_url || '');
@@ -1380,6 +1389,11 @@ function renderOrders(orders, draftOrders) {
       } catch (err) {
         setStatus(els.draftStatus, err.message, 'bad');
         addAuditEntry('draft_open_error', `Failed opening draft ${order.name || order.legacy_id || 'unknown'}: ${summarizeError(err)}`, { flushNow: true, reason: 'draft-open-error' });
+      } finally {
+        openBtn.disabled = false;
+        openBtn.classList.remove('is-working');
+        openBtn.removeAttribute('aria-busy');
+        openBtn.textContent = originalOpenLabel;
       }
     });
 
