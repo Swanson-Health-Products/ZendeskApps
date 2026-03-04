@@ -5,7 +5,7 @@ const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
 const { DynamoDBDocumentClient, BatchWriteCommand } = require("@aws-sdk/lib-dynamodb");
 
 const STORE = process.env.SHOPIFY_STORE;
-const API_VERSION = process.env.SHOPIFY_API_VERSION || "2024-10";
+const API_VERSION = process.env.SHOPIFY_API_VERSION || "2026-01";
 const SECRET_ARN = process.env.SHOPIFY_TOKEN_SECRET_ARN;
 const MAX_RESULTS = Number(process.env.MAX_RESULTS || 10);
 const SWANSON_SCAN_PAGE_SIZE = Number(process.env.SWANSON_SCAN_PAGE_SIZE || 50);

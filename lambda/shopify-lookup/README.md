@@ -38,3 +38,7 @@ Audit storage behavior:
 Environment variables for audit logging:
 - `AUDIT_LOG_TABLE` (optional): DynamoDB table name for audit events.
 - `AUDIT_LOG_TTL_DAYS` (optional, default `90`): TTL window for persisted audit items.
+
+Environment variables for Shopify API versioning:
+- `SHOPIFY_API_VERSION` (recommended): explicit Admin GraphQL version (for example, `2026-01`).
+- If not set, Lambda defaults to `2026-01`.

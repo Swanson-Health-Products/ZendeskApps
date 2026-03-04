@@ -103,3 +103,25 @@ If CLI deploy is blocked:
 ## Security
 - Never commit API tokens, profile exports, or local token files.
 - Keep secrets in secure local storage or Zendesk credential store.
+
+## Lambda Shopify API Version Baseline
+- Backend function: `zendesk-shopify-lookup` (region `us-east-1`)
+- Current target Admin GraphQL API version: `2026-01`
+- Keep Lambda env var pinned:
+
+```powershell
+aws lambda update-function-configuration `
+  --function-name zendesk-shopify-lookup `
+  --region us-east-1 `
+  --environment "Variables={SHOPIFY_API_VERSION=2026-01,...existing_vars}"
+```
+
+- Verify:
+
+```powershell
+aws lambda get-function-configuration `
+  --function-name zendesk-shopify-lookup `
+  --region us-east-1 `
+  --query "Environment.Variables.SHOPIFY_API_VERSION" `
+  --output text
+```
