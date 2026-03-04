@@ -53,6 +53,7 @@ There is no test harness in this repository. Validate changes via:
 - Do **not** commit credentials.
 - Zendesk app settings (API base URL, API key, bridge URL, etc.) are configured in the Zendesk admin UI.
 - For Shopify: store the Admin API token in AWS Secrets Manager and grant the Lambda permission to read it.
+- For Shopify Admin API work, do not introduce new REST endpoints; use GraphQL Admin API only.
 
 ## Architecture Notes (High level)
 

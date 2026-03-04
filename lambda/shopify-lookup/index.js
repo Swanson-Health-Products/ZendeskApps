@@ -242,20 +242,78 @@ async function fetchOrderFraudAnalysis({ token, orderLegacyId }) {
     };
   }
 
-  const path = `/admin/api/${API_VERSION}/orders/${orderLegacyId}/risks.json`;
-  const { status, body } = await httpsRequestWithRedirect({
-    method: "GET",
-    hostname: `${STORE}.myshopify.com`,
-    path,
-    headers: {
-      "X-Shopify-Access-Token": token,
-      "Accept": "application/json",
-    },
-  });
+  const graphqlQuery = `
+    query OrderRisk($id: ID!) {
+      order(id: $id) {
+        risk {
+          recommendation
+          assessments {
+            riskLevel
+            provider {
+              title
+            }
+            facts {
+              description
+              sentiment
+            }
+          }
+        }
+      }
+    }
+  `;
 
-  if (status >= 200 && status < 300) {
-    const payload = JSON.parse(body || "{}");
-    return { fraud_analysis: summarizeShopifyOrderRisks(payload.risks || []) };
+  const payload = JSON.stringify({
+    query: graphqlQuery,
+    variables: { id: `gid://shopify/Order/${orderLegacyId}` },
+  });
+  const { error, data } = await shopifyGraphqlRequest({ token, payload });
+  if (!error) {
+    const risk = data?.data?.order?.risk || null;
+    if (!risk) {
+      return {
+        fraud_analysis: {
+          available: true,
+          recommendation: null,
+          level: "unknown",
+          reasons: [],
+          signals: [],
+        },
+      };
+    }
+
+    const recommendation = String(risk.recommendation || "").trim().toUpperCase() || null;
+    const assessments = Array.isArray(risk.assessments) ? risk.assessments : [];
+    const reasons = [];
+    const signals = assessments.map((assessment) => {
+      const provider = String(assessment?.provider?.title || "").trim();
+      const level = String(assessment?.riskLevel || "").trim().toUpperCase();
+      const facts = Array.isArray(assessment?.facts) ? assessment.facts : [];
+      const message = facts
+        .map((fact) => String(fact?.description || "").trim())
+        .filter(Boolean)
+        .join(" | ");
+      if (message && !reasons.includes(message)) {
+        reasons.push(message);
+      }
+      return {
+        source: provider || null,
+        recommendation: level || null,
+        score: null,
+        message: message || null,
+        display: true,
+        cause_cancel: level === "HIGH",
+      };
+    });
+
+    return {
+      fraud_analysis: {
+        available: true,
+        recommendation,
+        level: mapRecommendationToLevel(recommendation),
+        reasons: reasons.slice(0, 10),
+        signals,
+      },
+    };
   }
 
   return {
@@ -265,87 +323,86 @@ async function fetchOrderFraudAnalysis({ token, orderLegacyId }) {
       level: "unknown",
       reasons: [],
       signals: [],
-      unavailable_reason: `shopify_risk_status_${status}`,
+      unavailable_reason: `shopify_risk_status_${error.status || 502}`,
     },
-  };
-}
-
-async function fetchCustomersRest({ token, query, limit }) {
-  const path = `/admin/api/${API_VERSION}/customers/search.json?query=${encodeURIComponent(query)}&limit=${limit}`;
-  const { status, body } = await httpsRequest({
-    method: "GET",
-    hostname: `${STORE}.myshopify.com`,
-    path,
-    headers: {
-      "X-Shopify-Access-Token": token,
-      "Accept": "application/json",
-    },
-  });
-
-  if (status < 200 || status >= 300) {
-    return { error: { status, body } };
-  }
-
-  const payload = JSON.parse(body || "{}");
-  const customers = Array.isArray(payload.customers) ? payload.customers : [];
-  return {
-    customers: customers.map((c) => ({
-      id: c.id,
-      first_name: c.first_name || "",
-      last_name: c.last_name || "",
-      email: c.email || "",
-      phone: c.phone || "",
-      state: c.state || "",
-      tags: c.tags || "",
-    })),
   };
 }
 
 async function fetchCustomerProfile({ token, customerId }) {
-  const legacyId = toCustomerLegacyId(customerId);
-  if (!legacyId) {
+  const customerGid = toCustomerGid(customerId);
+  if (customerGid === "invalid" || !customerGid) {
     return { error: { status: 400, body: "customer_id must be a Shopify customer id or gid" } };
   }
 
-  const customerPath = `/admin/api/${API_VERSION}/customers/${legacyId}.json`;
-  const customerResp = await httpsRequestWithRedirect({
-    method: "GET",
-    hostname: `${STORE}.myshopify.com`,
-    path: customerPath,
-    headers: {
-      "X-Shopify-Access-Token": token,
-      "Accept": "application/json",
-    },
-  });
-  if (customerResp.status < 200 || customerResp.status >= 300) {
-    return { error: { status: customerResp.status, body: customerResp.body } };
+  const query = `
+    query CustomerProfile($id: ID!) {
+      customer(id: $id) {
+        id
+        legacyResourceId
+        firstName
+        lastName
+        email
+        phone
+        numberOfOrders
+        amountSpent {
+          amount
+          currencyCode
+        }
+        lastOrder {
+          name
+          createdAt
+          processedAt
+        }
+        orders(first: 50, sortKey: PROCESSED_AT, reverse: true) {
+          edges {
+            node {
+              name
+              createdAt
+              processedAt
+              lineItems(first: 100) {
+                edges {
+                  node {
+                    title
+                    sku
+                    quantity
+                    sellingPlan {
+                      name
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+  const payload = JSON.stringify({ query, variables: { id: customerGid } });
+  const { error, data } = await shopifyGraphqlRequest({ token, payload });
+  if (error) return { error };
+
+  const customer = data?.data?.customer;
+  if (!customer) {
+    return { error: { status: 404, body: "Customer not found" } };
   }
 
-  const customerPayload = JSON.parse(customerResp.body || "{}");
-  const customer = customerPayload.customer || {};
-
-  const orderPath = `/admin/api/${API_VERSION}/customers/${legacyId}/orders.json?status=any&limit=50&fields=id,name,created_at,processed_at,total_price,currency,line_items`;
-  const orderResp = await httpsRequestWithRedirect({
-    method: "GET",
-    hostname: `${STORE}.myshopify.com`,
-    path: orderPath,
-    headers: {
-      "X-Shopify-Access-Token": token,
-      "Accept": "application/json",
-    },
-  });
-  if (orderResp.status < 200 || orderResp.status >= 300) {
-    return { error: { status: orderResp.status, body: orderResp.body } };
-  }
-
-  const ordersPayload = JSON.parse(orderResp.body || "{}");
-  const orders = Array.isArray(ordersPayload.orders) ? ordersPayload.orders : [];
+  const orders = (customer.orders?.edges || []).map(({ node }) => ({
+    name: node?.name || "",
+    created_at: node?.createdAt || null,
+    processed_at: node?.processedAt || null,
+    line_items: (node?.lineItems?.edges || []).map(({ node: line }) => ({
+      sku: line?.sku || "",
+      title: line?.title || "",
+      quantity: Number(line?.quantity || 0),
+      selling_plan_name: line?.sellingPlan?.name || "",
+    })),
+  }));
 
   const subMap = new Map();
   orders.forEach((order) => {
     const lineItems = Array.isArray(order.line_items) ? order.line_items : [];
     lineItems.forEach((line) => {
-      const planName = line?.selling_plan_allocation?.selling_plan?.name || line?.selling_plan_name || "";
+      const planName = line?.selling_plan_name || "";
       if (!planName) return;
       const sku = String(line.sku || "").trim();
       const key = `${sku}::${planName}`;
@@ -373,92 +430,88 @@ async function fetchCustomerProfile({ token, customerId }) {
 
   const recentOrder = orders[0] || null;
   const profile = {
-    id: customer.id || Number(legacyId),
-    first_name: customer.first_name || "",
-    last_name: customer.last_name || "",
+    id: customer.legacyResourceId || customer.id,
+    first_name: customer.firstName || "",
+    last_name: customer.lastName || "",
     email: customer.email || "",
     phone: customer.phone || "",
-    orders_count: Number(customer.orders_count || orders.length || 0),
-    lifetime_value: customer.total_spent || "0.00",
-    currency: customer.currency || recentOrder?.currency || "USD",
-    last_order_at: recentOrder?.processed_at || recentOrder?.created_at || null,
-    last_order_name: recentOrder?.name || "",
-    email_marketing_state: customer.email_marketing_consent?.state || "unknown",
-    sms_marketing_state: customer.sms_marketing_consent?.state || "unknown",
-    accepts_marketing: Boolean(customer.accepts_marketing),
+    orders_count: Number(customer.numberOfOrders || orders.length || 0),
+    lifetime_value: customer.amountSpent?.amount || "0.00",
+    currency: customer.amountSpent?.currencyCode || "USD",
+    last_order_at: customer.lastOrder?.processedAt || customer.lastOrder?.createdAt || recentOrder?.processed_at || recentOrder?.created_at || null,
+    last_order_name: customer.lastOrder?.name || recentOrder?.name || "",
+    email_marketing_state: "unknown",
+    sms_marketing_state: "unknown",
+    accepts_marketing: false,
     subscriptions,
   };
 
   return { profile };
 }
 
-async function fetchDiscountByCode({ token, code }) {
-  const path = `/admin/api/${API_VERSION}/discount_codes/lookup.json?code=${encodeURIComponent(code)}`;
-  const { status, body } = await httpsRequestWithRedirect({
-    method: "GET",
-    hostname: `${STORE}.myshopify.com`,
-    path,
-    headers: {
-      "X-Shopify-Access-Token": token,
-      "Accept": "application/json",
-    },
-  });
-
-  if (status < 200 || status >= 300) {
-    return { error: { status, body } };
-  }
-
-  const payload = JSON.parse(body || "{}");
-  return { discount_code: payload.discount_code || null };
-}
-
-async function fetchPriceRule({ token, priceRuleId }) {
-  const path = `/admin/api/${API_VERSION}/price_rules/${priceRuleId}.json`;
-  const { status, body } = await httpsRequestWithRedirect({
-    method: "GET",
-    hostname: `${STORE}.myshopify.com`,
-    path,
-    headers: {
-      "X-Shopify-Access-Token": token,
-      "Accept": "application/json",
-    },
-  });
-
-  if (status < 200 || status >= 300) {
-    return { error: { status, body } };
-  }
-
-  const payload = JSON.parse(body || "{}");
-  return { price_rule: payload.price_rule || null };
-}
-
 async function getAppliedDiscountFromCode({ token, code }) {
-  const lookup = await fetchDiscountByCode({ token, code });
-  if (lookup.error) return lookup;
-  const discount = lookup.discount_code;
-  if (!discount || !discount.price_rule_id) {
-    return { error: { status: 404, body: "Discount code not found" } };
+  const normalizedCode = String(code || "").trim();
+  if (!normalizedCode) {
+    return { error: { status: 400, body: "Discount code required" } };
   }
 
-  const priceRuleResult = await fetchPriceRule({ token, priceRuleId: discount.price_rule_id });
-  if (priceRuleResult.error) return priceRuleResult;
-  const priceRule = priceRuleResult.price_rule;
-  if (!priceRule) return { error: { status: 404, body: "Price rule not found" } };
+  const query = `
+    query DiscountByCode($query: String!) {
+      discountNodes(first: 1, query: $query) {
+        edges {
+          node {
+            id
+            discount {
+              __typename
+              ... on DiscountCodeBasic {
+                title
+                customerGets {
+                  value {
+                    __typename
+                    ... on DiscountPercentage {
+                      percentage
+                    }
+                    ... on MoneyV2 {
+                      amount
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  `;
+  const payload = JSON.stringify({
+    query,
+    variables: { query: `code:${normalizedCode}` },
+  });
+  const { error, data } = await shopifyGraphqlRequest({ token, payload });
+  if (error) return { error };
 
-  const valueTypeRaw = String(priceRule.value_type || "").toLowerCase();
-  if (valueTypeRaw !== "percentage" && valueTypeRaw !== "fixed_amount") {
-    return { error: { status: 400, body: `Unsupported price_rule value_type: ${priceRule.value_type || "unknown"}` } };
-  }
-  const valueType = valueTypeRaw === "percentage" ? "PERCENTAGE" : "FIXED_AMOUNT";
-  const rawValue = Number(priceRule.value || 0);
-  const value = Math.abs(rawValue);
-  if (!Number.isFinite(value) || value <= 0) {
-    return { error: { status: 400, body: "Invalid price rule value" } };
+  const edge = data?.data?.discountNodes?.edges?.[0];
+  const discount = edge?.node?.discount;
+  if (!discount || discount.__typename !== "DiscountCodeBasic") {
+    return { error: { status: 404, body: "Discount code not found or unsupported" } };
   }
 
+  const valueNode = discount?.customerGets?.value || {};
+  let valueType = null;
+  let value = null;
+  if (valueNode.__typename === "DiscountPercentage") {
+    valueType = "PERCENTAGE";
+    value = Number(valueNode.percentage || 0);
+  } else if (valueNode.__typename === "MoneyV2") {
+    valueType = "FIXED_AMOUNT";
+    value = Number(valueNode.amount || 0);
+  }
+  if (!valueType || !Number.isFinite(value) || value <= 0) {
+    return { error: { status: 400, body: "Unsupported discount value type" } };
+  }
   return {
     applied_discount: {
-      title: priceRule.title || code,
+      title: discount.title || normalizedCode,
       value,
       valueType,
     },
@@ -920,49 +973,42 @@ async function fetchCustomerOrders({ token, customerId }) {
 }
 
 async function createCustomerAddress({ token, customerId, address, setDefault }) {
-  const legacyId = toCustomerLegacyId(customerId);
-  if (!legacyId) {
+  const customerGid = toCustomerGid(customerId);
+  if (customerGid === "invalid" || !customerGid) {
     return { error: { status: 400, body: "customer_id must be a Shopify customer id or gid" } };
   }
 
-  const path = `/admin/api/${API_VERSION}/customers/${legacyId}/addresses.json`;
-  const { status, body } = await httpsRequestWithRedirect({
-    method: "POST",
-    hostname: `${STORE}.myshopify.com`,
-    path,
-    headers: {
-      "X-Shopify-Access-Token": token,
-      "Accept": "application/json",
-      "Content-Type": "application/json",
-    },
-  }, JSON.stringify({ address }));
-
-  if (status < 200 || status >= 300) {
-    return { error: { status, body } };
-  }
-
-  const payload = JSON.parse(body || "{}");
-  const addressId = payload?.customer_address?.id || null;
-  if (!addressId || !setDefault) {
-    return { address_id: addressId };
-  }
-
-  const defaultPath = `/admin/api/${API_VERSION}/customers/${legacyId}/addresses/${addressId}/default.json`;
-  const defaultResult = await httpsRequestWithRedirect({
-    method: "PUT",
-    hostname: `${STORE}.myshopify.com`,
-    path: defaultPath,
-    headers: {
-      "X-Shopify-Access-Token": token,
-      "Accept": "application/json",
+  const mutation = `
+    mutation CustomerAddressCreate($customerId: ID!, $address: MailingAddressInput!, $setAsDefault: Boolean) {
+      customerAddressCreate(customerId: $customerId, address: $address, setAsDefault: $setAsDefault) {
+        customerAddress {
+          id
+          legacyResourceId
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+  `;
+  const payload = JSON.stringify({
+    query: mutation,
+    variables: {
+      customerId: customerGid,
+      address,
+      setAsDefault: Boolean(setDefault),
     },
   });
-
-  if (defaultResult.status < 200 || defaultResult.status >= 300) {
-    return { error: { status: defaultResult.status, body: defaultResult.body } };
+  const { error, data } = await shopifyGraphqlRequest({ token, payload });
+  if (error) return { error };
+  const result = data?.data?.customerAddressCreate;
+  const userErrors = result?.userErrors || [];
+  if (userErrors.length) {
+    return { error: { status: 400, body: JSON.stringify(userErrors) } };
   }
-
-  return { address_id: addressId };
+  const legacyId = result?.customerAddress?.legacyResourceId;
+  return { address_id: legacyId || result?.customerAddress?.id || null };
 }
 
 function splitCustomerName(name) {
@@ -974,32 +1020,60 @@ function splitCustomerName(name) {
 
 async function createCustomer({ token, name, email, phone }) {
   const { first_name, last_name } = splitCustomerName(name);
-  const path = `/admin/api/${API_VERSION}/customers.json`;
+  const mutation = `
+    mutation CustomerCreate($input: CustomerInput!) {
+      customerCreate(input: $input) {
+        customer {
+          id
+          legacyResourceId
+          firstName
+          lastName
+          email
+          phone
+          state
+          tags
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+  `;
   const payload = JSON.stringify({
-    customer: {
-      first_name,
-      last_name,
-      email,
-      phone,
+    query: mutation,
+    variables: {
+      input: {
+        firstName: first_name || undefined,
+        lastName: last_name || undefined,
+        email,
+        phone,
+      },
     },
   });
-  const { status, body } = await httpsRequestWithRedirect({
-    method: "POST",
-    hostname: `${STORE}.myshopify.com`,
-    path,
-    headers: {
-      "X-Shopify-Access-Token": token,
-      "Accept": "application/json",
-      "Content-Type": "application/json",
-    },
-  }, payload);
+  const { error, data } = await shopifyGraphqlRequest({ token, payload });
+  if (error) return { error };
 
-  if (status < 200 || status >= 300) {
-    return { error: { status, body } };
+  const result = data?.data?.customerCreate;
+  const userErrors = result?.userErrors || [];
+  if (userErrors.length) {
+    return { error: { status: 400, body: JSON.stringify(userErrors) } };
   }
-
-  const data = JSON.parse(body || "{}");
-  return { customer: data?.customer || null };
+  const customer = result?.customer;
+  return {
+    customer: customer
+      ? {
+          id: customer.legacyResourceId || customer.id,
+          gid: customer.id,
+          first_name: customer.firstName || "",
+          last_name: customer.lastName || "",
+          email: customer.email || "",
+          phone: customer.phone || "",
+          state: customer.state || "",
+          tags: Array.isArray(customer.tags) ? customer.tags.join(", ") : "",
+        }
+      : null,
+  };
 }
 
 async function fetchVariantPricing({ token, variantIds }) {
@@ -1843,25 +1917,6 @@ async function fetchProductsByTitle({ token, query, limit }) {
   return { count: matches.length, variants: matches };
 }
 
-async function fetchVariantBySkuRest({ token, sku, limit }) {
-  const path = `/admin/api/${API_VERSION}/variants.json?sku=${encodeURIComponent(sku)}&limit=${limit}`;
-  const { status, body } = await httpsRequestWithRedirect({
-    method: "GET",
-    hostname: `${STORE}.myshopify.com`,
-    path,
-    headers: {
-      "X-Shopify-Access-Token": token,
-      "Accept": "application/json",
-    },
-  });
-  if (status < 200 || status >= 300) {
-    return { error: { status, body } };
-  }
-  const payload = JSON.parse(body || "{}");
-  const variants = Array.isArray(payload.variants) ? payload.variants : [];
-  return { variants };
-}
-
 async function fetchSkus({ token, sku, limit }) {
   const normalized = normalizeSku(sku);
   const queries = [
@@ -2413,7 +2468,7 @@ exports.handler = async (event) => {
       if (result.error) {
         const status = result.error.status || 502;
         return respond(status, {
-          error: "Shopify REST error",
+          error: "Shopify GraphQL error",
           status,
           body: String(result.error.body || "").slice(0, 2000),
         });
@@ -2645,12 +2700,12 @@ exports.handler = async (event) => {
       return respond(400, { error: "Provide first_name, last_name, email, phone, or query" });
     }
 
-    const result = await fetchCustomersRest({ token, query, limit });
+    const result = await fetchCustomersGraphql({ token, query, limit });
 
     if (result.error) {
       const status = result.error.status || 502;
       return respond(status, {
-        error: "Shopify REST error",
+        error: "Shopify GraphQL error",
         status,
         body: String(result.error.body || "").slice(0, 2000),
       });
