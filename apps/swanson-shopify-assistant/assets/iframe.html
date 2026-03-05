@@ -131,6 +131,31 @@
       animation: button-shift 1.2s linear infinite;
       color: #fff;
     }
+    button.is-working:disabled {
+      opacity: 1;
+      cursor: progress;
+    }
+    button.is-working::before {
+      content: "";
+      display: inline-block;
+      width: 11px;
+      height: 11px;
+      margin-right: 7px;
+      border-radius: 50%;
+      border: 2px solid rgba(255, 255, 255, 0.45);
+      border-top-color: #ffffff;
+      vertical-align: -1px;
+      animation: spin 0.7s linear infinite;
+    }
+    button.is-working::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(120deg, transparent 0%, rgba(255, 255, 255, 0.35) 45%, transparent 70%);
+      transform: translateX(-120%);
+      animation: sheen 1.1s ease-in-out infinite;
+      pointer-events: none;
+    }
     @keyframes status-shift {
       from { background-position: 0% 50%; }
       to { background-position: 100% 50%; }
@@ -138,6 +163,14 @@
     @keyframes button-shift {
       from { background-position: 0% 50%; }
       to { background-position: 100% 50%; }
+    }
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    @keyframes sheen {
+      from { transform: translateX(-120%); }
+      to { transform: translateX(130%); }
     }
     .list { margin: 0; padding: 0; list-style: none; }
     .list li { padding: 8px 0; border-bottom: 1px dashed var(--border); }
@@ -735,6 +768,12 @@
     .order-actions button:hover,
     .order-actions button.clicked,
     .order-actions button.clicked-hover {
+      background: #2a3a16;
+      border-color: #2a3a16;
+      color: #ffffff;
+    }
+    .order-actions button.is-working,
+    .order-actions button.is-working:hover {
       background: #2a3a16;
       border-color: #2a3a16;
       color: #ffffff;
