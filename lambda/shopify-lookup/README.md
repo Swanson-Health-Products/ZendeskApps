@@ -49,3 +49,8 @@ Authentication:
   - missing key -> `401`
   - invalid key -> `403`
   - missing `API_KEY` env var -> `500` (fail-closed misconfiguration)
+
+Draft metadata:
+- Draft create/update supports `metadata` object in request body and maps it to Shopify Draft Order `customAttributes`.
+- The app populates `agnoStack-metadata.agent_id` with the Zendesk agent ID.
+- Backend no longer injects idempotency tags into draft tags.

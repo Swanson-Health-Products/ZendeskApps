@@ -1777,35 +1777,6 @@ function setCachedIdempotentDraftGid(cacheKey, draftGid) {
   });
 }
 
-async function findExistingDraftByIdempotencyTag({ token, customerId, idempotencyTag }) {
-  if (!customerId || !idempotencyTag) return { draftOrder: null };
-  const query = `
-    query($query: String!) {
-      draftOrders(first: 25, query: $query, sortKey: UPDATED_AT, reverse: true) {
-        edges {
-          node {
-            id
-            tags
-          }
-        }
-      }
-    }
-  `;
-  const customerLegacyId = toCustomerLegacyId(customerId);
-  const queryParts = ["status:open"];
-  if (customerLegacyId) queryParts.push(`customer_id:${customerLegacyId}`);
-  const payload = JSON.stringify({
-    query,
-    variables: { query: queryParts.join(" ") },
-  });
-  const { error, data } = await shopifyGraphqlRequest({ token, payload });
-  if (error) return { error };
-  const edges = data?.data?.draftOrders?.edges || [];
-  const match = edges.find(({ node }) => Array.isArray(node?.tags) && node.tags.includes(idempotencyTag));
-  if (!match?.node?.id) return { draftOrder: null };
-  return fetchDraftOrder({ token, id: match.node.id });
-}
-
 function mapVariantNode(node) {
   return {
     id: node.id,
@@ -2268,6 +2239,36 @@ function normalizeShippingLineInput(input) {
   };
 }
 
+function buildDraftCustomAttributes(body) {
+  if (!body || typeof body !== "object") return [];
+  const attributes = [];
+  const pushAttribute = (keyInput, valueInput) => {
+    const key = String(keyInput || "").trim();
+    const value = valueInput === undefined || valueInput === null ? "" : String(valueInput).trim();
+    if (!key || !value) return;
+    attributes.push({ key, value });
+  };
+
+  const metadata = body.metadata && typeof body.metadata === "object" ? body.metadata : {};
+  for (const [key, value] of Object.entries(metadata)) {
+    pushAttribute(key, value);
+  }
+
+  const agentId =
+    body.agent_id
+    || body.agentId
+    || metadata["agnoStack-metadata.agent_id"]
+    || body["agnoStack-metadata.agent_id"]
+    || "";
+  pushAttribute("agnoStack-metadata.agent_id", agentId);
+
+  const deduped = new Map();
+  for (const entry of attributes) {
+    deduped.set(entry.key, entry.value);
+  }
+  return Array.from(deduped.entries()).slice(0, 50).map(([key, value]) => ({ key, value }));
+}
+
 exports.handler = async (event) => {
   try {
     if (!STORE) return respond(500, { error: "Missing SHOPIFY_STORE" });
@@ -2354,8 +2355,6 @@ exports.handler = async (event) => {
         .digest("hex")
         .slice(0, 24);
       const idempotencyCacheKey = `${customerId}|${idempotencyKey || fallbackFingerprint}`;
-      const idempotencyTag = idempotencyKey ? `zd_idemp_${idempotencyKey}` : "";
-
       const cachedDraftGid = getCachedIdempotentDraftGid(idempotencyCacheKey);
       if (cachedDraftGid) {
         const cachedResult = await fetchDraftOrder({ token, id: cachedDraftGid });
@@ -2363,17 +2362,6 @@ exports.handler = async (event) => {
           return respond(200, {
             draft_order: cachedResult.draftOrder,
             invoice_url: cachedResult.draftOrder?.invoiceUrl || null,
-            idempotent_replay: true,
-          });
-        }
-      }
-      if (idempotencyTag) {
-        const existingResult = await findExistingDraftByIdempotencyTag({ token, customerId, idempotencyTag });
-        if (!existingResult.error && existingResult.draftOrder) {
-          setCachedIdempotentDraftGid(idempotencyCacheKey, existingResult.draftOrder.id);
-          return respond(200, {
-            draft_order: existingResult.draftOrder,
-            invoice_url: existingResult.draftOrder?.invoiceUrl || null,
             idempotent_replay: true,
           });
         }
@@ -2399,13 +2387,12 @@ exports.handler = async (event) => {
         customerId,
         lineItems: normalizedLineItems,
       };
+      const customAttributes = buildDraftCustomAttributes(body);
+      if (customAttributes.length) input.customAttributes = customAttributes;
 
       const deferredInput = {};
       if (body.note) deferredInput.note = body.note;
       if (body.email) deferredInput.email = body.email;
-      const mergedTags = Array.isArray(body.tags) && body.tags.length ? [...body.tags] : [];
-      if (idempotencyTag && !mergedTags.includes(idempotencyTag)) mergedTags.push(idempotencyTag);
-      if (mergedTags.length) deferredInput.tags = mergedTags.slice(0, 250);
       if (body.applied_discount || body.appliedDiscount) {
         input.appliedDiscount = body.applied_discount || body.appliedDiscount;
       } else if (bogoResult.discountCodes?.length) {
@@ -2418,17 +2405,6 @@ exports.handler = async (event) => {
 
       const result = await createDraftOrder({ token, input });
       if (result.error) {
-        if (idempotencyTag) {
-          const existingResult = await findExistingDraftByIdempotencyTag({ token, customerId, idempotencyTag });
-          if (!existingResult.error && existingResult.draftOrder) {
-            setCachedIdempotentDraftGid(idempotencyCacheKey, existingResult.draftOrder.id);
-            return respond(200, {
-              draft_order: existingResult.draftOrder,
-              invoice_url: existingResult.draftOrder?.invoiceUrl || null,
-              idempotent_replay: true,
-            });
-          }
-        }
         const status = result.error.status || 502;
         return respond(status, {
           error: "Shopify GraphQL error",
@@ -2550,6 +2526,8 @@ exports.handler = async (event) => {
       normalizedLineItems = bogoResult.lineItems;
 
       const input = { lineItems: normalizedLineItems };
+      const customAttributes = buildDraftCustomAttributes(body);
+      if (customAttributes.length) input.customAttributes = customAttributes;
       if (body.applied_discount || body.appliedDiscount) {
         input.appliedDiscount = body.applied_discount || body.appliedDiscount;
       } else if (bogoResult.discountCodes?.length) {

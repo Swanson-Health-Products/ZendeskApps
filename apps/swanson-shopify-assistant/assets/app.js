@@ -2491,6 +2491,9 @@ els.btnCreateDraft.addEventListener('click', async () => {
         draft_order_id: els.draftOrderId.value.trim(),
         line_items: orderItems.map((item) => ({ variant_id: item.variantId, quantity: item.quantity })),
       };
+      if (auditState.actorId) {
+        payload.metadata = { 'agnoStack-metadata.agent_id': String(auditState.actorId).trim() };
+      }
       if (promoCode) payload.promo_code = promoCode;
       if (shippingLine) payload.shipping_line = shippingLine;
       if (addr) {
@@ -2523,6 +2526,9 @@ els.btnCreateDraft.addEventListener('click', async () => {
       line_items: orderItems.map((item) => ({ variant_id: item.variantId, quantity: item.quantity })),
       note: 'Swanson Shopify Assistant',
     };
+    if (auditState.actorId) {
+      payload.metadata = { 'agnoStack-metadata.agent_id': String(auditState.actorId).trim() };
+    }
     if (promoCode) payload.promo_code = promoCode;
     if (shippingLine) payload.shipping_line = shippingLine;
     if (addr) {
