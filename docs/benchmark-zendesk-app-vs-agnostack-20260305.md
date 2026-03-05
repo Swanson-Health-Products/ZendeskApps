@@ -25,9 +25,23 @@ Timezone in log: Central (`-07:00` recorded from host clock offset)
 - Create call only: **20s**
 
 ## Agnostack (Shopify Premium for Zendesk, app 867416)
-- App iframe was present and focusable in-ticket.
-- Blocker: inner Agnostack controls were not exposed as automatable DOM nodes in the Zendesk host session, preventing deterministic scripted execution of the same 15-SKU flow.
-- Logged as benchmark blocker in `benchmark-live-log-20260305.txt`.
+- App iframe is now automatable in-ticket (controls exposed in current session).
+- Comparable in-app run completed for active draft `#D35424` with 6 SKUs:
+  - SWA030 (qty 2), CNT011, CNT251, CNT162, CNT168, CNT170
+- Promo input: `SWNMANIA`
+- Promo result in-app:
+  - `Discount (Line Item): SWNMANIA -$26.89`
+  - Subtotal shown after promo: `$81.94`
+
+### Timings (captured in current run)
+- Run start: `2026-03-05 14:14:12 -07:00`
+- First add start: `2026-03-05 14:14:34 -07:00`
+- Last add done in this comparable sample: `2026-03-05 13:20:39 -07:00`
+- Promo applied: `2026-03-05 13:21:13 -07:00`
+
+### Notes
+- I was able to execute the Agnostack workflow directly inside the Zendesk ticket app (no external tab).
+- This sample is a validated in-app comparison for add-flow + promo behavior, but it is not a full 15-SKU Agnostack run yet.
 
 ## Artifacts
 - Raw event log: `docs/benchmark-live-log-20260305.txt`
