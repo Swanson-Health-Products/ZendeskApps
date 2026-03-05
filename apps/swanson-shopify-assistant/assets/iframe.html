@@ -14,6 +14,22 @@
       --accent: #1e73e8;
       --good: #128a4a;
       --bad: #b42318;
+      --btn-bg: #33461c;
+      --btn-text: #ffffff;
+      --btn-border: none;
+      --btn-hover-bg: #2a3a16;
+      --btn-hover-text: #ffffff;
+      --btn-hover-border: #2a3a16;
+      --btn-active-bg: #1f2a11;
+      --btn-secondary-bg: #33461c;
+      --btn-secondary-text: #ffffff;
+      --btn-secondary-border: none;
+      --btn-primary-update-bg: #57a345;
+      --btn-nav-bg: #e6edf5;
+      --btn-nav-text: #1b2430;
+      --btn-nav-border: none;
+      --btn-nav-active-bg: #33461c;
+      --btn-nav-active-text: #ffffff;
     }
     * { box-sizing: border-box; }
     body {
@@ -38,17 +54,19 @@
       margin-bottom: 8px;
     }
     .module-nav button {
-      background: #e6edf5;
-      color: #1b2430;
+      background: var(--btn-nav-bg);
+      color: var(--btn-nav-text);
+      border: var(--btn-nav-border);
     }
     .module-nav button.active {
-      background: #33461c;
-      color: #ffffff;
+      background: var(--btn-nav-active-bg);
+      color: var(--btn-nav-active-text);
     }
     .module-nav button:hover,
     .module-nav button.clicked-hover {
-      background: #2a3a16;
-      color: #ffffff;
+      background: var(--btn-hover-bg);
+      border-color: var(--btn-hover-border);
+      color: var(--btn-hover-text);
     }
     .panel {
       background: var(--panel);
@@ -78,21 +96,22 @@
       min-width: 0;
       padding: 8px 10px;
       border-radius: 8px;
-      border: none;
-      background: #33461c;
+      border: var(--btn-border);
+      background: var(--btn-bg);
       cursor: pointer;
       font-weight: 600;
-      color: white;
+      color: var(--btn-text);
       font-size: 14px;
+      font-family: inherit;
     }
     button.primary-update {
-      background: #57a345;
+      background: var(--btn-primary-update-bg);
     }
     button.secondary {
-      background: #33461c;
-      border: none;
+      background: var(--btn-secondary-bg);
+      border: var(--btn-secondary-border);
       font-weight: 600;
-      color: #ffffff;
+      color: var(--btn-secondary-text);
     }
     button:disabled { opacity: .5; cursor: not-allowed; }
     .btn-compact {
@@ -101,13 +120,17 @@
       padding: 6px 10px;
     }
     .btn-compact:hover {
-      background: #2a3a16;
+      background: var(--btn-hover-bg);
+      border-color: var(--btn-hover-border);
+      color: var(--btn-hover-text);
       box-shadow: 0 2px 6px rgba(0,0,0,.2);
     }
     .btn-compact.clicked {
       transform: translateY(1px);
       box-shadow: inset 0 1px 2px rgba(0,0,0,.2);
-      background: #1f2a11;
+      background: var(--btn-active-bg);
+      border-color: var(--btn-active-bg);
+      color: var(--btn-hover-text);
     }
     .row { display: flex; gap: 10px; flex-wrap: wrap; }
     .row > * { flex: 0 0 auto; }
@@ -256,14 +279,15 @@
       justify-content: space-between;
       align-items: center;
       border-radius: 10px;
-      background: #eef3e8;
-      color: #1b2430;
+      background: var(--btn-secondary-bg);
+      color: var(--btn-secondary-text);
       font-weight: 600;
-      border: 0;
+      border: var(--btn-secondary-border);
     }
     .upsell-toggle:hover {
-      background: #e4ebdb;
-      color: #1b2430;
+      background: var(--btn-hover-bg);
+      border-color: var(--btn-hover-border);
+      color: var(--btn-hover-text);
     }
     .upsell-toggle .caret {
       font-size: 12px;
@@ -353,22 +377,23 @@
       color: var(--accent);
     }
     .invoice-link.secondary {
-      background: #33461c;
-      border: none;
+      background: var(--btn-secondary-bg);
+      border: var(--btn-secondary-border);
       border-radius: 8px;
       padding: 6px 10px;
-      color: #ffffff;
+      color: var(--btn-secondary-text);
       text-decoration: none;
     }
     .invoice-link.secondary:visited,
     .invoice-link.secondary:active {
-      color: #ffffff;
+      color: var(--btn-secondary-text);
       text-decoration: none;
     }
     .invoice-link.secondary:hover,
     .invoice-link.secondary:focus-visible {
-      background: #2a3a16;
-      color: #ffffff;
+      background: var(--btn-hover-bg);
+      border-color: var(--btn-hover-border);
+      color: var(--btn-hover-text);
       text-decoration: none;
       box-shadow: 0 2px 6px rgba(0,0,0,.2);
     }
@@ -428,13 +453,17 @@
       font-size: 12px;
     }
     .order-actions button:hover {
-      background: #2a3a16;
+      background: var(--btn-hover-bg);
+      border-color: var(--btn-hover-border);
+      color: var(--btn-hover-text);
       box-shadow: 0 2px 6px rgba(0,0,0,.2);
     }
     .order-actions button.clicked {
       transform: translateY(1px);
       box-shadow: inset 0 1px 2px rgba(0,0,0,.2);
-      background: #1f2a11;
+      background: var(--btn-active-bg);
+      border-color: var(--btn-active-bg);
+      color: var(--btn-hover-text);
     }
     .draft-actions {
       display: flex;
@@ -678,6 +707,22 @@
       --accent: #0f7a44;
       --good: #0f7a44;
       --bad: #b42318;
+      --btn-bg: #0f7a44;
+      --btn-text: #ffffff;
+      --btn-border: none;
+      --btn-hover-bg: #2a3a16;
+      --btn-hover-text: #ffffff;
+      --btn-hover-border: #2a3a16;
+      --btn-active-bg: #2a3a16;
+      --btn-secondary-bg: #f8faf9;
+      --btn-secondary-text: #1f2937;
+      --btn-secondary-border: 1px solid #d0d5dd;
+      --btn-primary-update-bg: #0f7a44;
+      --btn-nav-bg: #ffffff;
+      --btn-nav-text: #0f7a44;
+      --btn-nav-border: 1px solid #cde8d7;
+      --btn-nav-active-bg: #0f7a44;
+      --btn-nav-active-text: #ffffff;
     }
     body {
       background: var(--bg);
@@ -725,23 +770,9 @@
     .module-nav button {
       flex: 1 1 0;
       border-radius: 999px;
-      border: 1px solid #cde8d7;
-      background: #ffffff;
-      color: #0f7a44;
       font-size: 11px;
       font-weight: 700;
       padding: 6px 8px;
-    }
-    .module-nav button.active {
-      background: #0f7a44;
-      border-color: #0f7a44;
-      color: #ffffff;
-    }
-    .module-nav button:hover,
-    .module-nav button.clicked-hover {
-      background: #2a3a16;
-      border-color: #2a3a16;
-      color: #ffffff;
     }
     h3 {
       margin: 0;
@@ -777,17 +808,6 @@
       border-radius: 8px;
       font-size: 12px;
     }
-    button {
-      background: #0f7a44;
-    }
-    button.primary-update {
-      background: #0f7a44;
-    }
-    button.secondary {
-      background: #f8faf9;
-      color: #1f2937;
-      border: 1px solid #d0d5dd;
-    }
     button.secondary:hover,
     button.secondary.clicked-hover,
     .invoice-link.secondary:hover,
@@ -795,15 +815,15 @@
     .order-actions button:hover,
     .order-actions button.clicked,
     .order-actions button.clicked-hover {
-      background: #2a3a16;
-      border-color: #2a3a16;
-      color: #ffffff;
+      background: var(--btn-hover-bg);
+      border-color: var(--btn-hover-border);
+      color: var(--btn-hover-text);
     }
     .order-actions button.is-working,
     .order-actions button.is-working:hover {
-      background: #2a3a16;
-      border-color: #2a3a16;
-      color: #ffffff;
+      background: var(--btn-hover-bg);
+      border-color: var(--btn-hover-border);
+      color: var(--btn-hover-text);
     }
     .status {
       font-size: 11px;
