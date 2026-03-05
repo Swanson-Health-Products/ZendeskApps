@@ -2007,9 +2007,15 @@ function clearPromoStatus() {
   setStatus(els.promoStatus, '', '');
 }
 
-function setPromoResultStatus(promoCode, draftOrder, bogoOverride) {
+function setPromoResultStatus(promoCode, draftOrder, bogoOverride, resolution = {}) {
   if (!els.promoStatus) return;
   const normalized = String(promoCode || '').trim().toUpperCase();
+  const entered = String(resolution.enteredCode || '').trim().toUpperCase();
+  const sourceCode = String(resolution.sourceCode || '').trim().toUpperCase();
+  const mode = String(resolution.mode || '').trim().toLowerCase();
+  const resolvedCode = String(resolution.resolvedCode || normalized || '').trim().toUpperCase();
+  const conversionSource = sourceCode || entered;
+  const convertedFromSource = mode === 'source_map' && conversionSource && resolvedCode;
   if (!normalized) {
     if (bogoOverride) {
       const discountAmount = getDraftDiscountAmount(draftOrder);
@@ -2028,6 +2034,11 @@ function setPromoResultStatus(promoCode, draftOrder, bogoOverride) {
   }
   const discountAmount = getDraftDiscountAmount(draftOrder);
   if (discountAmount > 0) {
+    if (convertedFromSource) {
+      setStatus(els.promoStatus, `Source ${conversionSource} converted to promo ${resolvedCode} and applied: -$${discountAmount.toFixed(2)}.`, 'good');
+      addAuditEntry('promo_applied', `Source ${conversionSource} converted to promo ${resolvedCode}, discount $${discountAmount.toFixed(2)}.`);
+      return;
+    }
     if (bogoOverride && normalized !== 'INT999') {
       setStatus(els.promoStatus, `Promo ${normalized} applied with BOGO handling: -$${discountAmount.toFixed(2)}.`, 'good');
       addAuditEntry('promo_applied', `Promo ${normalized} applied with BOGO handling, discount $${discountAmount.toFixed(2)}.`);
@@ -2043,8 +2054,18 @@ function setPromoResultStatus(promoCode, draftOrder, bogoOverride) {
     return;
   }
   if (bogoOverride) {
+    if (convertedFromSource) {
+      setStatus(els.promoStatus, `Source ${conversionSource} converted to promo ${resolvedCode}, but no discount was returned for current items.`, 'bad');
+      addAuditEntry('promo_missing', `Source ${conversionSource} converted to promo ${resolvedCode} but no discount returned.`);
+      return;
+    }
     setStatus(els.promoStatus, `Promo ${normalized} and BOGO handling were sent, but no discount was returned for current items.`, 'bad');
     addAuditEntry('promo_missing', `Promo ${normalized} with BOGO handling sent but no discount returned.`);
+    return;
+  }
+  if (convertedFromSource) {
+    setStatus(els.promoStatus, `Source ${conversionSource} converted to promo ${resolvedCode}, but no discount was returned for current items.`, 'bad');
+    addAuditEntry('promo_missing', `Source ${conversionSource} converted to promo ${resolvedCode} but no discount returned.`);
     return;
   }
   setStatus(els.promoStatus, `Promo ${normalized} was sent, but no discount was returned for current items.`, 'bad');
@@ -2580,9 +2601,16 @@ els.btnCreateDraft.addEventListener('click', async () => {
       });
       const draft = data?.draft_order || null;
       const resolvedPromoCode = String(data?.resolved_promo_code || '').trim();
+      const resolvedSourceCode = String(data?.resolved_source_code || '').trim();
+      const promoResolutionMode = String(data?.promo_resolution_mode || '').trim();
       setInvoiceUrl(data?.invoice_url || draft?.invoiceUrl || draft?.invoice_url || '');
       setTotals(draft);
-      setPromoResultStatus(resolvedPromoCode || promoCode, draft, hasBogoItems);
+      setPromoResultStatus(resolvedPromoCode || promoCode, draft, hasBogoItems, {
+        enteredCode: promoCode,
+        resolvedCode: resolvedPromoCode,
+        sourceCode: resolvedSourceCode,
+        mode: promoResolutionMode,
+      });
       applyDraftDiscountsToCurrentItems(draft);
       renderOrderItems();
       updateShippingRestrictionWarning();
@@ -2616,10 +2644,17 @@ els.btnCreateDraft.addEventListener('click', async () => {
     });
     const draft = data?.draft_order || null;
     const resolvedPromoCode = String(data?.resolved_promo_code || '').trim();
+    const resolvedSourceCode = String(data?.resolved_source_code || '').trim();
+    const promoResolutionMode = String(data?.promo_resolution_mode || '').trim();
     els.draftOrderId.value = draft?.legacyResourceId || draft?.id || '';
     setInvoiceUrl(data?.invoice_url || draft?.invoiceUrl || draft?.invoice_url || '');
     setTotals(draft);
-    setPromoResultStatus(resolvedPromoCode || promoCode, draft, hasBogoItems);
+    setPromoResultStatus(resolvedPromoCode || promoCode, draft, hasBogoItems, {
+      enteredCode: promoCode,
+      resolvedCode: resolvedPromoCode,
+      sourceCode: resolvedSourceCode,
+      mode: promoResolutionMode,
+    });
     applyDraftDiscountsToCurrentItems(draft);
     renderOrderItems();
     updateShippingRestrictionWarning();
