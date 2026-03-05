@@ -83,6 +83,8 @@ let orderItems = [];
 let lastOrders = [];
 let lastDraftOrders = [];
 let ordersMinimized = false;
+let draftOrdersCollapsed = false;
+let customerOrdersCollapsed = false;
 let selectedShipState = '';
 let lastSearchCustomers = [];
 let autoSearchDone = false;
@@ -1257,10 +1259,44 @@ function renderOrders(orders, draftOrders) {
     return;
   }
 
-  if (draftOrders.length) {
+  const createSection = ({ title, count, collapsed, onToggle }) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'orders-section';
     const header = document.createElement('div');
-    header.innerHTML = '<strong>Draft Orders</strong>';
-    els.ordersList.appendChild(header);
+    header.className = 'orders-section-header';
+    header.style.display = 'flex';
+    header.style.justifyContent = 'space-between';
+    header.style.alignItems = 'center';
+    header.style.margin = '6px 0';
+    header.innerHTML = `<strong>${title} (${count})</strong>`;
+    const toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.className = 'secondary btn-compact';
+    toggleBtn.textContent = collapsed ? 'Show' : 'Hide';
+    toggleBtn.setAttribute('aria-expanded', String(!collapsed));
+    toggleBtn.addEventListener('click', () => {
+      onToggle(!collapsed);
+    });
+    header.appendChild(toggleBtn);
+    wrap.appendChild(header);
+    const body = document.createElement('div');
+    body.style.display = collapsed ? 'none' : 'block';
+    wrap.appendChild(body);
+    els.ordersList.appendChild(wrap);
+    return body;
+  };
+
+  let draftBody = null;
+  if (draftOrders.length) {
+    draftBody = createSection({
+      title: 'Draft Orders',
+      count: draftOrders.length,
+      collapsed: draftOrdersCollapsed,
+      onToggle: (next) => {
+        draftOrdersCollapsed = next;
+        renderOrders(lastOrders, lastDraftOrders);
+      },
+    });
   }
 
   draftOrders.forEach((order) => {
@@ -1402,14 +1438,20 @@ function renderOrders(orders, draftOrders) {
       link.href = order.invoice_url;
     }
 
-    els.ordersList.appendChild(card);
+    if (draftBody) draftBody.appendChild(card);
   });
 
+  let ordersBody = null;
   if (orders.length) {
-    const header = document.createElement('div');
-    header.style.marginTop = '12px';
-    header.innerHTML = '<strong>Orders</strong>';
-    els.ordersList.appendChild(header);
+    ordersBody = createSection({
+      title: 'Orders',
+      count: orders.length,
+      collapsed: customerOrdersCollapsed,
+      onToggle: (next) => {
+        customerOrdersCollapsed = next;
+        renderOrders(lastOrders, lastDraftOrders);
+      },
+    });
   }
 
   orders.forEach((order) => {
@@ -1855,7 +1897,7 @@ function renderOrders(orders, draftOrders) {
       }
     });
 
-    els.ordersList.appendChild(card);
+    if (ordersBody) ordersBody.appendChild(card);
   });
 }
 
