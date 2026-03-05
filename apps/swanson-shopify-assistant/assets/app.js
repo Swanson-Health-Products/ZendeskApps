@@ -61,6 +61,7 @@ const els = {
   draftOrderId: document.getElementById('draftOrderId'),
   invoiceUrl: document.getElementById('invoiceUrl'),
   invoiceLink: document.getElementById('invoiceLink'),
+  btnCopyInvoiceUrl: document.getElementById('btnCopyInvoiceUrl'),
   promoCode: document.getElementById('promoCode'),
   promoStatus: document.getElementById('promoStatus'),
   shippingSpeed: document.getElementById('shippingSpeed'),
@@ -1945,16 +1946,40 @@ async function handleCustomerSelect(customer, allCustomers) {
 
 function setInvoiceUrl(url) {
   els.invoiceUrl.value = url || '';
-  if (els.invoiceLink) {
-    if (url) {
-      els.invoiceLink.textContent = 'Open invoice';
+  if (url) {
+    if (els.invoiceLink) {
       els.invoiceLink.href = url;
-      els.invoiceLink.style.display = 'inline-block';
-    } else {
-      els.invoiceLink.textContent = '';
-      els.invoiceLink.href = '#';
-      els.invoiceLink.style.display = 'none';
+      els.invoiceLink.style.display = 'inline-flex';
     }
+    if (els.btnCopyInvoiceUrl) {
+      els.btnCopyInvoiceUrl.style.display = 'inline-block';
+      els.btnCopyInvoiceUrl.disabled = false;
+    }
+    return;
+  }
+  if (els.invoiceLink) {
+    els.invoiceLink.href = '#';
+    els.invoiceLink.style.display = 'none';
+  }
+  if (els.btnCopyInvoiceUrl) {
+    els.btnCopyInvoiceUrl.style.display = 'none';
+    els.btnCopyInvoiceUrl.disabled = true;
+  }
+}
+
+async function copyInvoiceUrlToClipboard() {
+  const url = String(els.invoiceUrl?.value || '').trim();
+  if (!url) {
+    setStatus(els.draftStatus, 'No invoice URL available yet.', 'bad');
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    setStatus(els.draftStatus, 'Invoice URL copied to clipboard.', 'good');
+    addAuditEntry('invoice_copy', 'Copied invoice URL to clipboard.');
+  } catch (err) {
+    setStatus(els.draftStatus, 'Could not copy invoice URL automatically.', 'bad');
+    addAuditEntry('invoice_copy_error', `Invoice URL copy failed: ${summarizeError(err)}`, { flushNow: true, reason: 'invoice-copy-error' });
   }
 }
 
@@ -2365,6 +2390,11 @@ if (els.btnSelectFirstCustomer) {
 if (els.btnUpsellToggle) {
   els.btnUpsellToggle.addEventListener('click', () => {
     setUpsellExpanded(!upsellExpanded);
+  });
+}
+if (els.btnCopyInvoiceUrl) {
+  els.btnCopyInvoiceUrl.addEventListener('click', async () => {
+    await copyInvoiceUrlToClipboard();
   });
 }
 
