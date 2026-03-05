@@ -19,6 +19,11 @@ const SHOPIFY_GRAPHQL_RETRY_BASE_MS = Number(process.env.SHOPIFY_GRAPHQL_RETRY_B
 const SHOPIFY_GRAPHQL_RETRY_MAX_MS = Number(process.env.SHOPIFY_GRAPHQL_RETRY_MAX_MS || 4000);
 const BOGO_VARIANT_PRICING_CACHE_TTL_MS = Number(process.env.BOGO_VARIANT_PRICING_CACHE_TTL_MS || (5 * 60 * 1000));
 const DRAFT_CREATE_IDEMPOTENCY_TTL_MS = Number(process.env.DRAFT_CREATE_IDEMPOTENCY_TTL_MS || (10 * 60 * 1000));
+const SOURCE_CODE_MAP_URL = String(
+  process.env.SOURCE_CODE_MAP_URL || "https://shopify-app-react-cf-dev.swansonvitamins.workers.dev/api/source-code-map"
+).trim();
+const SOURCE_CODE_MAP_TIMEOUT_MS = Number(process.env.SOURCE_CODE_MAP_TIMEOUT_MS || 2500);
+const SOURCE_CODE_MAP_TTL_MS = Number(process.env.SOURCE_CODE_MAP_TTL_MS || (10 * 60 * 1000));
 
 const secretsManager = new SecretsManagerClient({});
 const dynamoDbClient = new DynamoDBClient({});
@@ -32,6 +37,9 @@ let cachedToken = null;
 let cachedTokenFetchedAt = 0;
 const variantPricingCache = new Map();
 const draftCreateIdempotencyCache = new Map();
+let sourceCodeMapCache = null;
+let sourceCodeMapFetchedAt = 0;
+let sourceCodeMapLoading = null;
 
 function respond(statusCode, body, extraHeaders = {}) {
   return {
@@ -157,6 +165,123 @@ function buildOptionsFromUrl(url, baseOptions) {
     hostname: parsed.hostname,
     path: `${parsed.pathname}${parsed.search}`,
   };
+}
+
+function normalizeSourceCodeKey(input) {
+  return String(input || "").trim().toUpperCase();
+}
+
+async function fetchJsonWithTimeout(url, timeoutMs) {
+  const parsed = new URL(url);
+  const options = {
+    method: "GET",
+    hostname: parsed.hostname,
+    path: `${parsed.pathname}${parsed.search}`,
+    headers: {
+      Accept: "application/json",
+      "User-Agent": "swanson-shopify-assistant/1.0",
+    },
+  };
+  return new Promise((resolve, reject) => {
+    const req = https.request(options, (res) => {
+      let data = "";
+      res.on("data", (chunk) => (data += chunk));
+      res.on("end", () => {
+        if ((res.statusCode || 0) >= 400) {
+          reject(new Error(`Source map fetch failed (${res.statusCode || 0})`));
+          return;
+        }
+        try {
+          resolve(data ? JSON.parse(data) : {});
+        } catch (err) {
+          reject(new Error("Source map returned invalid JSON"));
+        }
+      });
+    });
+    req.on("error", reject);
+    req.setTimeout(timeoutMs, () => {
+      const err = new Error(`Source map request timed out after ${timeoutMs}ms`);
+      err.code = "ETIMEDOUT";
+      req.destroy(err);
+    });
+    req.end();
+  });
+}
+
+function parseSourceCodeMap(payload) {
+  if (!payload || typeof payload !== "object") return {};
+  const candidate = payload.source_to_promo || payload.sourceToPromo || payload;
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) return {};
+  const normalized = {};
+  for (const [sourceCode, promoCode] of Object.entries(candidate)) {
+    const key = normalizeSourceCodeKey(sourceCode);
+    const value = String(promoCode || "").trim();
+    if (key && value) normalized[key] = value;
+  }
+  return normalized;
+}
+
+async function getSourceCodeMap() {
+  const now = Date.now();
+  if (sourceCodeMapCache && now - sourceCodeMapFetchedAt < SOURCE_CODE_MAP_TTL_MS) {
+    return sourceCodeMapCache;
+  }
+  if (sourceCodeMapLoading) return sourceCodeMapLoading;
+  sourceCodeMapLoading = (async () => {
+    const payload = await fetchJsonWithTimeout(SOURCE_CODE_MAP_URL, SOURCE_CODE_MAP_TIMEOUT_MS);
+    const parsed = parseSourceCodeMap(payload);
+    sourceCodeMapCache = parsed;
+    sourceCodeMapFetchedAt = Date.now();
+    return parsed;
+  })();
+  try {
+    return await sourceCodeMapLoading;
+  } finally {
+    sourceCodeMapLoading = null;
+  }
+}
+
+async function resolvePromoCodeCandidate(candidateRaw) {
+  const candidate = String(candidateRaw || "").trim();
+  if (!candidate) {
+    return {
+      promoCode: "",
+      sourceCode: "",
+      usedSourceMap: false,
+      sourceMapAvailable: false,
+      sourceMapError: "",
+    };
+  }
+  const sourceCode = normalizeSourceCodeKey(candidate);
+  try {
+    const map = await getSourceCodeMap();
+    const mappedPromo = String(map[sourceCode] || "").trim();
+    if (mappedPromo) {
+      return {
+        promoCode: mappedPromo,
+        sourceCode,
+        usedSourceMap: true,
+        sourceMapAvailable: true,
+        sourceMapError: "",
+      };
+    }
+    return {
+      promoCode: candidate,
+      sourceCode,
+      usedSourceMap: false,
+      sourceMapAvailable: true,
+      sourceMapError: "",
+    };
+  } catch (err) {
+    console.warn(`[source_map] lookup failed, fail-open to direct promo: ${err.message || err}`);
+    return {
+      promoCode: candidate,
+      sourceCode,
+      usedSourceMap: false,
+      sourceMapAvailable: false,
+      sourceMapError: String(err?.message || err || ""),
+    };
+  }
 }
 
 async function httpsRequestWithRedirect(options, body, maxRedirects = 1) {
@@ -2338,9 +2463,10 @@ exports.handler = async (event) => {
 
       const token = await getToken();
       const discountCodes = [];
-      if (body.promo_code || body.promoCode) {
-        const code = String(body.promo_code || body.promoCode || "").trim();
-        if (code) discountCodes.push(code);
+      const promoCandidate = body.promo_code || body.promoCode || body.source_code || body.sourceCode || "";
+      const promoResolution = await resolvePromoCodeCandidate(promoCandidate);
+      if (promoResolution.promoCode) {
+        discountCodes.push(promoResolution.promoCode);
       }
 
       const idempotencyKey = getDraftCreateIdempotencyKey({ event, body });
@@ -2466,6 +2592,9 @@ exports.handler = async (event) => {
       return respond(200, {
         draft_order: responseDraftOrder,
         invoice_url: responseDraftOrder?.invoiceUrl || draftOrder?.invoiceUrl || null,
+        resolved_promo_code: promoResolution.promoCode || null,
+        resolved_source_code: promoResolution.usedSourceMap ? promoResolution.sourceCode : null,
+        promo_resolution_mode: promoResolution.usedSourceMap ? "source_map" : "direct",
       });
     }
 
@@ -2502,9 +2631,10 @@ exports.handler = async (event) => {
       }
 
       const discountCodes = [];
-      if (body.promo_code || body.promoCode) {
-        const code = String(body.promo_code || body.promoCode || "").trim();
-        if (code) discountCodes.push(code);
+      const promoCandidate = body.promo_code || body.promoCode || body.source_code || body.sourceCode || "";
+      const promoResolution = await resolvePromoCodeCandidate(promoCandidate);
+      if (promoResolution.promoCode) {
+        discountCodes.push(promoResolution.promoCode);
       }
 
       const tBogoStart = Date.now();
@@ -2584,6 +2714,9 @@ exports.handler = async (event) => {
       return respond(200, {
         draft_order: responseDraftOrder,
         invoice_url: responseDraftOrder?.invoiceUrl || draftOrder?.invoiceUrl || null,
+        resolved_promo_code: promoResolution.promoCode || null,
+        resolved_source_code: promoResolution.usedSourceMap ? promoResolution.sourceCode : null,
+        promo_resolution_mode: promoResolution.usedSourceMap ? "source_map" : "direct",
       });
     }
 

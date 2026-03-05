@@ -11,6 +11,10 @@
 `POST /audit_log`
 
 `/draft_order` and `/draft_order_update` accept `promo_code` (e.g., SAVE50) to apply a Shopify discount code.
+Promo resolution is fail-open:
+- Lambda attempts source-code mapping first (Cloudflare source-code map endpoint).
+- If mapped, mapped promo is applied.
+- If mapping is missing or unavailable, input is treated as a direct promo code (no agent impact).
 
 ## Response
 

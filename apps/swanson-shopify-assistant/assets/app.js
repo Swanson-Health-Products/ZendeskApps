@@ -2579,9 +2579,10 @@ els.btnCreateDraft.addEventListener('click', async () => {
         'X-Idempotency-Key': idempotencyKey,
       });
       const draft = data?.draft_order || null;
+      const resolvedPromoCode = String(data?.resolved_promo_code || '').trim();
       setInvoiceUrl(data?.invoice_url || draft?.invoiceUrl || draft?.invoice_url || '');
       setTotals(draft);
-      setPromoResultStatus(promoCode, draft, hasBogoItems);
+      setPromoResultStatus(resolvedPromoCode || promoCode, draft, hasBogoItems);
       applyDraftDiscountsToCurrentItems(draft);
       renderOrderItems();
       updateShippingRestrictionWarning();
@@ -2614,10 +2615,11 @@ els.btnCreateDraft.addEventListener('click', async () => {
       'X-Idempotency-Key': idempotencyKey,
     });
     const draft = data?.draft_order || null;
+    const resolvedPromoCode = String(data?.resolved_promo_code || '').trim();
     els.draftOrderId.value = draft?.legacyResourceId || draft?.id || '';
     setInvoiceUrl(data?.invoice_url || draft?.invoiceUrl || draft?.invoice_url || '');
     setTotals(draft);
-    setPromoResultStatus(promoCode, draft, hasBogoItems);
+    setPromoResultStatus(resolvedPromoCode || promoCode, draft, hasBogoItems);
     applyDraftDiscountsToCurrentItems(draft);
     renderOrderItems();
     updateShippingRestrictionWarning();
