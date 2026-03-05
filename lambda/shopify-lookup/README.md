@@ -42,3 +42,10 @@ Environment variables for audit logging:
 Environment variables for Shopify API versioning:
 - `SHOPIFY_API_VERSION` (recommended): explicit Admin GraphQL version (for example, `2026-01`).
 - If not set, Lambda defaults to `2026-01`.
+
+Authentication:
+- `API_KEY` (required): inbound key expected in `X-Api-Key` header.
+- Lambda enforces `X-Api-Key` before route handling:
+  - missing key -> `401`
+  - invalid key -> `403`
+  - missing `API_KEY` env var -> `500` (fail-closed misconfiguration)

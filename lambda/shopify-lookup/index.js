@@ -7,6 +7,7 @@ const { DynamoDBDocumentClient, BatchWriteCommand } = require("@aws-sdk/lib-dyna
 const STORE = process.env.SHOPIFY_STORE;
 const API_VERSION = process.env.SHOPIFY_API_VERSION || "2026-01";
 const SECRET_ARN = process.env.SHOPIFY_TOKEN_SECRET_ARN;
+const API_KEY = String(process.env.API_KEY || "").trim();
 const MAX_RESULTS = Number(process.env.MAX_RESULTS || 10);
 const SWANSON_SCAN_PAGE_SIZE = Number(process.env.SWANSON_SCAN_PAGE_SIZE || 50);
 const SWANSON_SCAN_MAX_PAGES = Number(process.env.SWANSON_SCAN_MAX_PAGES || 20);
@@ -69,6 +70,42 @@ function httpsRequest(options, body) {
     }
     req.end();
   });
+}
+
+function getHeader(event, name) {
+  const headers = event && event.headers && typeof event.headers === "object"
+    ? event.headers
+    : {};
+  const target = String(name || "").toLowerCase();
+  for (const [key, value] of Object.entries(headers)) {
+    if (String(key || "").toLowerCase() === target) {
+      return String(value || "").trim();
+    }
+  }
+  return "";
+}
+
+function authorizeRequest(event) {
+  if (!API_KEY) {
+    console.error("Missing API_KEY environment variable");
+    return respond(500, { error: "Server auth misconfiguration" });
+  }
+
+  const provided = getHeader(event, "x-api-key");
+  if (!provided) {
+    return respond(401, { error: "Missing API key" });
+  }
+
+  const expectedBuf = Buffer.from(API_KEY, "utf8");
+  const providedBuf = Buffer.from(provided, "utf8");
+  if (
+    expectedBuf.length !== providedBuf.length ||
+    !crypto.timingSafeEqual(expectedBuf, providedBuf)
+  ) {
+    return respond(403, { error: "Invalid API key" });
+  }
+
+  return null;
 }
 
 function sleep(ms) {
@@ -2238,6 +2275,9 @@ exports.handler = async (event) => {
     if (event.httpMethod === "OPTIONS") {
       return respond(200, { ok: true });
     }
+
+    const authResult = authorizeRequest(event);
+    if (authResult) return authResult;
 
     const path = event.path || "";
     if (path.endsWith("/customer_addresses")) {
