@@ -344,13 +344,33 @@
     .invoice-link {
       display: inline-flex;
       align-items: center;
+      justify-content: center;
       margin-top: 0;
-      font-size: 13px;
+      font-size: 14px;
+      font-family: inherit;
+      font-weight: 600;
+      line-height: 1.2;
       color: var(--accent);
     }
     .invoice-link.secondary {
+      background: #33461c;
+      border: none;
+      border-radius: 8px;
+      padding: 6px 10px;
       color: #ffffff;
       text-decoration: none;
+    }
+    .invoice-link.secondary:visited,
+    .invoice-link.secondary:active {
+      color: #ffffff;
+      text-decoration: none;
+    }
+    .invoice-link.secondary:hover,
+    .invoice-link.secondary:focus-visible {
+      background: #2a3a16;
+      color: #ffffff;
+      text-decoration: none;
+      box-shadow: 0 2px 6px rgba(0,0,0,.2);
     }
     .price-strike {
       text-decoration: line-through;
@@ -770,6 +790,8 @@
     }
     button.secondary:hover,
     button.secondary.clicked-hover,
+    .invoice-link.secondary:hover,
+    .invoice-link.secondary:focus-visible,
     .order-actions button:hover,
     .order-actions button.clicked,
     .order-actions button.clicked-hover {
