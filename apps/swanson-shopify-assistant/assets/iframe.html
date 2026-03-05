@@ -48,15 +48,16 @@
     .module { display: none; }
     .module.active { display: block; }
     .module-nav {
-      display: flex;
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 8px;
-      flex-wrap: wrap;
       margin-bottom: 8px;
     }
     .module-nav button {
       background: var(--btn-nav-bg);
       color: var(--btn-nav-text);
       border: var(--btn-nav-border);
+      width: 100%;
     }
     .module-nav button.active {
       background: var(--btn-nav-active-bg);
@@ -765,10 +766,9 @@
     .module-nav {
       width: 100%;
       gap: 6px;
-      flex-wrap: nowrap;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
     }
     .module-nav button {
-      flex: 1 1 0;
       border-radius: 999px;
       font-size: 11px;
       font-weight: 700;
@@ -866,10 +866,7 @@
         padding: 8px;
       }
       .module-nav {
-        flex-wrap: wrap;
-      }
-      .module-nav button {
-        flex: 1 0 calc(33% - 4px);
+        grid-template-columns: repeat(3, minmax(0, 1fr));
       }
       .totals {
         grid-template-columns: 1fr;
