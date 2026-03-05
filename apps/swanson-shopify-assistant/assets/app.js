@@ -72,6 +72,10 @@ const els = {
   total: document.getElementById('total'),
   btnCreateDraft: document.getElementById('btnCreateDraft'),
   draftStatus: document.getElementById('draftStatus'),
+  conversionPanel: document.getElementById('conversionPanel'),
+  conversionStatus: document.getElementById('conversionStatus'),
+  btnRefreshOrdersFromConversion: document.getElementById('btnRefreshOrdersFromConversion'),
+  btnStopConversionPolling: document.getElementById('btnStopConversionPolling'),
   orderItems: document.getElementById('orderItems'),
   navCustomer: document.getElementById('navCustomer'),
   navOrders: document.getElementById('navOrders'),
@@ -107,6 +111,14 @@ const upsellVariantCache = new Map();
 const upsellVariantCacheTtlMs = 5 * 60 * 1000;
 const draftMutationKeyTtlMs = 60 * 1000;
 let lastDraftMutationKey = { signature: '', key: '', ts: 0 };
+const draftConversionPollIntervalMs = 20 * 1000;
+const draftConversionPollMaxMs = 10 * 60 * 1000;
+let draftConversionPoller = {
+  timer: null,
+  draftId: '',
+  startedAt: 0,
+  sourceAction: '',
+};
 
 const client = ZAFClient.init();
 let settings = {};
@@ -1356,6 +1368,8 @@ function renderOrders(orders, draftOrders) {
       const originalOpenLabel = openBtn.textContent || 'Open Draft';
       try {
         const draftId = order.legacy_id || '';
+        stopDraftConversionPolling('draft_open_switch');
+        showConversionPanel(false);
         addAuditEntry('draft_open', `Opening draft ${order.name || draftId || 'unknown'}.`);
         openBtn.disabled = true;
         openBtn.classList.add('is-working');
@@ -1927,6 +1941,8 @@ function restoreOrdersSection() {
 }
 
 async function handleCustomerSelect(customer, allCustomers) {
+  stopDraftConversionPolling('customer_switch');
+  showConversionPanel(false);
   els.customerId.value = customer.id;
   renderCustomers(allCustomers, customer.id);
   setStatus(els.customerStatus, `Selected customer ${customer.id}. Fetching addresses and orders...`, '');
@@ -1965,6 +1981,137 @@ function setInvoiceUrl(url) {
     els.btnCopyInvoiceUrl.style.display = 'none';
     els.btnCopyInvoiceUrl.disabled = true;
   }
+}
+
+function normalizeDraftOrderId(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (/^\d+$/.test(raw)) return raw;
+  const gidMatch = raw.match(/DraftOrder\/(\d+)/i);
+  return gidMatch ? gidMatch[1] : '';
+}
+
+function setConversionPanelStatus(message, tone = '') {
+  if (!els.conversionStatus) return;
+  setStatus(els.conversionStatus, message, tone);
+}
+
+function showConversionPanel(show, options = {}) {
+  if (!els.conversionPanel) return;
+  const active = Boolean(show);
+  els.conversionPanel.classList.toggle('active', active);
+  if (!active) return;
+  const showRefresh = options.showRefresh !== false;
+  const showStop = options.showStop !== false;
+  if (els.btnRefreshOrdersFromConversion) {
+    els.btnRefreshOrdersFromConversion.style.display = showRefresh ? 'inline-block' : 'none';
+  }
+  if (els.btnStopConversionPolling) {
+    els.btnStopConversionPolling.style.display = showStop ? 'inline-block' : 'none';
+  }
+}
+
+function stopDraftConversionPolling(reason = 'manual_stop') {
+  if (draftConversionPoller.timer) {
+    clearInterval(draftConversionPoller.timer);
+  }
+  const hadTimer = Boolean(draftConversionPoller.timer);
+  draftConversionPoller = {
+    timer: null,
+    draftId: '',
+    startedAt: 0,
+    sourceAction: '',
+  };
+  if (hadTimer) {
+    addAuditEntry('draft_conversion_poll_stop', `Stopped conversion polling (${reason}).`);
+  }
+}
+
+async function refreshOrdersFromConversion() {
+  const customerId = String(els.customerId?.value || '').trim();
+  if (!customerId) {
+    setConversionPanelStatus('No customer selected to refresh orders.', 'bad');
+    return;
+  }
+  try {
+    setConversionPanelStatus('Refreshing customer orders...', 'progress');
+    await fetchOrdersForCustomer(customerId);
+    setConversionPanelStatus('Orders refreshed. Converted order should appear in Orders.', 'good');
+  } catch (err) {
+    setConversionPanelStatus(`Order refresh failed: ${summarizeError(err)}`, 'bad');
+  }
+}
+
+async function checkDraftConversionStatus() {
+  const currentDraftId = draftConversionPoller.draftId;
+  if (!currentDraftId) return;
+  const elapsedMs = Date.now() - draftConversionPoller.startedAt;
+  if (elapsedMs >= draftConversionPollMaxMs) {
+    stopDraftConversionPolling('timeout');
+    showConversionPanel(true, { showRefresh: true, showStop: false });
+    setConversionPanelStatus(`Still waiting after ${Math.ceil(draftConversionPollMaxMs / 60000)} minutes. Use Refresh Orders to check if conversion completed.`, 'bad');
+    addAuditEntry('draft_conversion_poll_timeout', `Conversion polling timed out for draft ${currentDraftId}.`, { flushNow: true, reason: 'draft-conversion-timeout' });
+    return;
+  }
+  try {
+    const data = await apiGet(`/draft_order_get?draft_order_id=${encodeURIComponent(currentDraftId)}`);
+    const draft = data?.draft_order || null;
+    const status = String(draft?.status || '').toUpperCase();
+    if (draft?.invoiceUrl) {
+      setInvoiceUrl(draft.invoiceUrl);
+    }
+    if (status === 'COMPLETED') {
+      stopDraftConversionPolling('completed');
+      showConversionPanel(true, { showRefresh: true, showStop: false });
+      setConversionPanelStatus(`Confirmed: Draft ${draft?.name || `#${currentDraftId}`} converted to an order.`, 'good');
+      setStatus(els.draftStatus, `Draft ${draft?.name || `#${currentDraftId}`} is now completed.`, 'good');
+      addAuditEntry('draft_conversion_detected', `Draft ${draft?.name || currentDraftId} status is COMPLETED.`, { flushNow: true, reason: 'draft-conversion-complete' });
+      return;
+    }
+    const elapsedSec = Math.floor(elapsedMs / 1000);
+    showConversionPanel(true, { showRefresh: true, showStop: true });
+    setConversionPanelStatus(`Still processing draft ${draft?.name || `#${currentDraftId}`}. Last status: ${status || 'OPEN'}. Checking again in 20s (${elapsedSec}s elapsed).`, 'progress');
+  } catch (err) {
+    const errText = summarizeError(err);
+    if (/404|not found/i.test(errText)) {
+      stopDraftConversionPolling('not_found');
+      showConversionPanel(true, { showRefresh: true, showStop: false });
+      setConversionPanelStatus(`Draft #${currentDraftId} is no longer available. It may have converted already; refresh Orders to confirm.`, 'good');
+      addAuditEntry('draft_conversion_possible', `Draft ${currentDraftId} no longer found during polling.`, { flushNow: true, reason: 'draft-conversion-not-found' });
+      return;
+    }
+    showConversionPanel(true, { showRefresh: true, showStop: true });
+    setConversionPanelStatus(`Polling error: ${errText}. Will retry in 20s.`, 'bad');
+  }
+}
+
+function startDraftConversionPolling(sourceAction) {
+  const draftId = normalizeDraftOrderId(els.draftOrderId?.value);
+  if (!draftId) {
+    showConversionPanel(true, { showRefresh: true, showStop: false });
+    setConversionPanelStatus('Open a draft before starting conversion checks.', 'bad');
+    return;
+  }
+  const sameDraftRunning = draftConversionPoller.timer && draftConversionPoller.draftId === draftId;
+  if (sameDraftRunning) {
+    showConversionPanel(true, { showRefresh: true, showStop: true });
+    setConversionPanelStatus(`Already checking draft #${draftId} every 20 seconds.`, 'progress');
+    return;
+  }
+  stopDraftConversionPolling('restart');
+  draftConversionPoller = {
+    timer: null,
+    draftId,
+    startedAt: Date.now(),
+    sourceAction: sourceAction || 'unknown',
+  };
+  showConversionPanel(true, { showRefresh: true, showStop: true });
+  setConversionPanelStatus(`Checking draft #${draftId} conversion every 20 seconds...`, 'progress');
+  addAuditEntry('draft_conversion_poll_start', `Started conversion polling for draft ${draftId} from ${draftConversionPoller.sourceAction}.`);
+  void checkDraftConversionStatus();
+  draftConversionPoller.timer = setInterval(() => {
+    void checkDraftConversionStatus();
+  }, draftConversionPollIntervalMs);
 }
 
 async function copyInvoiceUrlToClipboard() {
@@ -2416,6 +2563,24 @@ if (els.btnUpsellToggle) {
 if (els.btnCopyInvoiceUrl) {
   els.btnCopyInvoiceUrl.addEventListener('click', async () => {
     await copyInvoiceUrlToClipboard();
+    startDraftConversionPolling('copy_invoice_url');
+  });
+}
+if (els.invoiceLink) {
+  els.invoiceLink.addEventListener('click', () => {
+    startDraftConversionPolling('open_invoice');
+  });
+}
+if (els.btnRefreshOrdersFromConversion) {
+  els.btnRefreshOrdersFromConversion.addEventListener('click', async () => {
+    await refreshOrdersFromConversion();
+  });
+}
+if (els.btnStopConversionPolling) {
+  els.btnStopConversionPolling.addEventListener('click', () => {
+    stopDraftConversionPolling('agent_stop');
+    showConversionPanel(true, { showRefresh: true, showStop: false });
+    setConversionPanelStatus('Stopped conversion checks. Use Open Invoice or Copy URL to start again.', '');
   });
 }
 
@@ -2426,6 +2591,8 @@ document.querySelectorAll('.macro-btn').forEach((btn) => {
 });
 
 els.btnNewOrder.addEventListener('click', () => {
+  stopDraftConversionPolling('new_order');
+  showConversionPanel(false);
   minimizeOrdersSection();
   els.draftOrderId.value = '';
   setInvoiceUrl('');
@@ -2567,6 +2734,8 @@ els.btnCreateDraft.addEventListener('click', async () => {
     if (isUpdate && currentAddressValidation.requiresOverride && !els.addressOverride?.checked) {
       throw new Error('Address validation requires override to update this draft order.');
     }
+    stopDraftConversionPolling('draft_submit');
+    showConversionPanel(false);
     setDraftWorkingState(true, isUpdate);
     submitStarted = true;
     setStatus(els.draftStatus, isUpdate ? 'Updating draft order...' : 'Creating draft order...', 'progress');

@@ -690,6 +690,25 @@
       font-size: 13px;
       margin-top: 10px;
     }
+    .conversion-panel {
+      margin-top: 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 10px;
+      display: none;
+    }
+    .conversion-panel.active {
+      display: block;
+    }
+    .conversion-panel .status {
+      margin-bottom: 8px;
+    }
+    .conversion-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
     .totals {
       margin-top: 12px;
       display: grid;
@@ -1143,6 +1162,13 @@
           <input id="invoiceUrl" type="hidden" />
           <a id="invoiceLink" class="invoice-link secondary btn-compact" target="_blank" rel="noopener" style="display:none;">Open Invoice</a>
           <button id="btnCopyInvoiceUrl" class="secondary btn-compact" type="button" style="display:none;">Copy URL</button>
+        </div>
+      </div>
+      <div id="conversionPanel" class="conversion-panel">
+        <div class="status" id="conversionStatus"></div>
+        <div class="conversion-actions">
+          <button id="btnRefreshOrdersFromConversion" class="secondary btn-compact" type="button">Refresh Orders</button>
+          <button id="btnStopConversionPolling" class="secondary btn-compact" type="button">Stop Checking</button>
         </div>
       </div>
       <div id="addressValidation" class="warning" style="display:none;"></div>
