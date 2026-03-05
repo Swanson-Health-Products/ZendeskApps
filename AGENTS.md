@@ -49,6 +49,11 @@ There is no test harness in this repository. Validate changes via:
 - PRs should include: summary of changes, deployment impact (Zendesk app/Lambda), and any manual test notes.
 - Attach screenshots only if UI changes are visible in the agent workspace.
 
+## GitHub Operations
+
+- Use `gh` CLI as the primary mechanism for GitHub issue/PR lifecycle actions (create, update, comment, close).
+- If MCP GitHub tools return auth/scope errors but `gh` works, continue with `gh` and do not block execution.
+
 ## Security & Configuration Tips
 
 - Do **not** commit credentials.
