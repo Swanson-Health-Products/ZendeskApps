@@ -72,6 +72,7 @@ const els = {
   total: document.getElementById('total'),
   btnCreateDraft: document.getElementById('btnCreateDraft'),
   draftStatus: document.getElementById('draftStatus'),
+  btnConversionToggle: document.getElementById('btnConversionToggle'),
   conversionPanel: document.getElementById('conversionPanel'),
   conversionStatus: document.getElementById('conversionStatus'),
   btnRefreshOrdersFromConversion: document.getElementById('btnRefreshOrdersFromConversion'),
@@ -119,6 +120,7 @@ let draftConversionPoller = {
   startedAt: 0,
   sourceAction: '',
 };
+let conversionPanelExpanded = false;
 
 const client = ZAFClient.init();
 let settings = {};
@@ -1991,6 +1993,14 @@ function normalizeDraftOrderId(value) {
   return gidMatch ? gidMatch[1] : '';
 }
 
+function setConversionToggleState({ visible = false, label = 'Draft conversion check', working = false } = {}) {
+  if (!els.btnConversionToggle) return;
+  els.btnConversionToggle.textContent = label;
+  els.btnConversionToggle.classList.toggle('active', Boolean(visible));
+  els.btnConversionToggle.classList.toggle('is-working', Boolean(working));
+  els.btnConversionToggle.setAttribute('aria-expanded', conversionPanelExpanded ? 'true' : 'false');
+}
+
 function setConversionPanelStatus(message, tone = '') {
   if (!els.conversionStatus) return;
   setStatus(els.conversionStatus, message, tone);
@@ -1998,9 +2008,12 @@ function setConversionPanelStatus(message, tone = '') {
 
 function showConversionPanel(show, options = {}) {
   if (!els.conversionPanel) return;
-  const active = Boolean(show);
-  els.conversionPanel.classList.toggle('active', active);
-  if (!active) return;
+  conversionPanelExpanded = Boolean(show);
+  els.conversionPanel.classList.toggle('active', conversionPanelExpanded);
+  if (els.btnConversionToggle) {
+    els.btnConversionToggle.setAttribute('aria-expanded', conversionPanelExpanded ? 'true' : 'false');
+  }
+  if (!conversionPanelExpanded) return;
   const showRefresh = options.showRefresh !== false;
   const showStop = options.showStop !== false;
   if (els.btnRefreshOrdersFromConversion) {
@@ -2025,20 +2038,26 @@ function stopDraftConversionPolling(reason = 'manual_stop') {
   if (hadTimer) {
     addAuditEntry('draft_conversion_poll_stop', `Stopped conversion polling (${reason}).`);
   }
+  setConversionToggleState({ visible: false, label: 'Draft conversion check', working: false });
+  showConversionPanel(false);
 }
 
 async function refreshOrdersFromConversion() {
   const customerId = String(els.customerId?.value || '').trim();
   if (!customerId) {
     setConversionPanelStatus('No customer selected to refresh orders.', 'bad');
+    setConversionToggleState({ visible: true, label: 'Conversion check unavailable', working: false });
     return;
   }
   try {
     setConversionPanelStatus('Refreshing customer orders...', 'progress');
+    setConversionToggleState({ visible: true, label: 'Refreshing orders...', working: true });
     await fetchOrdersForCustomer(customerId);
     setConversionPanelStatus('Orders refreshed. Converted order should appear in Orders.', 'good');
+    setConversionToggleState({ visible: true, label: 'Orders refreshed', working: false });
   } catch (err) {
     setConversionPanelStatus(`Order refresh failed: ${summarizeError(err)}`, 'bad');
+    setConversionToggleState({ visible: true, label: 'Refresh failed', working: false });
   }
 }
 
@@ -2048,7 +2067,7 @@ async function checkDraftConversionStatus() {
   const elapsedMs = Date.now() - draftConversionPoller.startedAt;
   if (elapsedMs >= draftConversionPollMaxMs) {
     stopDraftConversionPolling('timeout');
-    showConversionPanel(true, { showRefresh: true, showStop: false });
+    setConversionToggleState({ visible: true, label: 'Conversion check timed out', working: false });
     setConversionPanelStatus(`Still waiting after ${Math.ceil(draftConversionPollMaxMs / 60000)} minutes. Use Refresh Orders to check if conversion completed.`, 'bad');
     addAuditEntry('draft_conversion_poll_timeout', `Conversion polling timed out for draft ${currentDraftId}.`, { flushNow: true, reason: 'draft-conversion-timeout' });
     return;
@@ -2062,25 +2081,25 @@ async function checkDraftConversionStatus() {
     }
     if (status === 'COMPLETED') {
       stopDraftConversionPolling('completed');
-      showConversionPanel(true, { showRefresh: true, showStop: false });
+      setConversionToggleState({ visible: true, label: `${draft?.name || `#${currentDraftId}`} converted`, working: false });
       setConversionPanelStatus(`Confirmed: Draft ${draft?.name || `#${currentDraftId}`} converted to an order.`, 'good');
       setStatus(els.draftStatus, `Draft ${draft?.name || `#${currentDraftId}`} is now completed.`, 'good');
       addAuditEntry('draft_conversion_detected', `Draft ${draft?.name || currentDraftId} status is COMPLETED.`, { flushNow: true, reason: 'draft-conversion-complete' });
       return;
     }
     const elapsedSec = Math.floor(elapsedMs / 1000);
-    showConversionPanel(true, { showRefresh: true, showStop: true });
+    setConversionToggleState({ visible: true, label: `Checking draft #${currentDraftId}...`, working: true });
     setConversionPanelStatus(`Still processing draft ${draft?.name || `#${currentDraftId}`}. Last status: ${status || 'OPEN'}. Checking again in 20s (${elapsedSec}s elapsed).`, 'progress');
   } catch (err) {
     const errText = summarizeError(err);
     if (/404|not found/i.test(errText)) {
       stopDraftConversionPolling('not_found');
-      showConversionPanel(true, { showRefresh: true, showStop: false });
+      setConversionToggleState({ visible: true, label: 'Draft no longer found', working: false });
       setConversionPanelStatus(`Draft #${currentDraftId} is no longer available. It may have converted already; refresh Orders to confirm.`, 'good');
       addAuditEntry('draft_conversion_possible', `Draft ${currentDraftId} no longer found during polling.`, { flushNow: true, reason: 'draft-conversion-not-found' });
       return;
     }
-    showConversionPanel(true, { showRefresh: true, showStop: true });
+    setConversionToggleState({ visible: true, label: 'Checking draft status...', working: true });
     setConversionPanelStatus(`Polling error: ${errText}. Will retry in 20s.`, 'bad');
   }
 }
@@ -2088,14 +2107,14 @@ async function checkDraftConversionStatus() {
 function startDraftConversionPolling(sourceAction) {
   const draftId = normalizeDraftOrderId(els.draftOrderId?.value);
   if (!draftId) {
-    showConversionPanel(true, { showRefresh: true, showStop: false });
-    setConversionPanelStatus('Open a draft before starting conversion checks.', 'bad');
+    setConversionToggleState({ visible: false, label: 'Draft conversion check', working: false });
+    showConversionPanel(false);
+    setStatus(els.draftStatus, 'Open a draft before starting conversion checks.', 'bad');
     return;
   }
   const sameDraftRunning = draftConversionPoller.timer && draftConversionPoller.draftId === draftId;
   if (sameDraftRunning) {
-    showConversionPanel(true, { showRefresh: true, showStop: true });
-    setConversionPanelStatus(`Already checking draft #${draftId} every 20 seconds.`, 'progress');
+    setConversionToggleState({ visible: true, label: `Checking draft #${draftId}...`, working: true });
     return;
   }
   stopDraftConversionPolling('restart');
@@ -2105,7 +2124,8 @@ function startDraftConversionPolling(sourceAction) {
     startedAt: Date.now(),
     sourceAction: sourceAction || 'unknown',
   };
-  showConversionPanel(true, { showRefresh: true, showStop: true });
+  setConversionToggleState({ visible: true, label: `Checking draft #${draftId}...`, working: true });
+  showConversionPanel(false);
   setConversionPanelStatus(`Checking draft #${draftId} conversion every 20 seconds...`, 'progress');
   addAuditEntry('draft_conversion_poll_start', `Started conversion polling for draft ${draftId} from ${draftConversionPoller.sourceAction}.`);
   void checkDraftConversionStatus();
@@ -2560,6 +2580,14 @@ if (els.btnUpsellToggle) {
     setUpsellExpanded(!upsellExpanded);
   });
 }
+if (els.btnConversionToggle) {
+  els.btnConversionToggle.addEventListener('click', () => {
+    showConversionPanel(!conversionPanelExpanded, {
+      showRefresh: true,
+      showStop: Boolean(draftConversionPoller.timer),
+    });
+  });
+}
 if (els.btnCopyInvoiceUrl) {
   els.btnCopyInvoiceUrl.addEventListener('click', async () => {
     await copyInvoiceUrlToClipboard();
@@ -2579,8 +2607,9 @@ if (els.btnRefreshOrdersFromConversion) {
 if (els.btnStopConversionPolling) {
   els.btnStopConversionPolling.addEventListener('click', () => {
     stopDraftConversionPolling('agent_stop');
-    showConversionPanel(true, { showRefresh: true, showStop: false });
+    setConversionToggleState({ visible: true, label: 'Conversion check paused', working: false });
     setConversionPanelStatus('Stopped conversion checks. Use Open Invoice or Copy URL to start again.', '');
+    showConversionPanel(true, { showRefresh: true, showStop: false });
   });
 }
 
