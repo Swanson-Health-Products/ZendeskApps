@@ -217,6 +217,17 @@
       border-color: #c7d9ac;
       box-shadow: 0 4px 12px rgba(51, 70, 28, 0.1);
     }
+    .customer-actions {
+      margin-top: 8px;
+      align-items: center;
+      justify-content: flex-end;
+    }
+    .customer-clear {
+      display: none;
+    }
+    .customer-clear.visible {
+      display: inline-flex;
+    }
     .customer-profile {
       margin-top: 12px;
       border: 1px solid var(--border);
@@ -979,6 +990,9 @@
       <div class="row" style="margin-top:10px;">
         <button id="btnSearchCustomer" class="btn-compact">Search</button>
         <button id="btnNewCustomer" class="btn-compact secondary">New Customer</button>
+      </div>
+      <div class="row customer-actions">
+        <button id="btnClearCustomer" class="btn-compact secondary customer-clear" type="button">Clear Customer</button>
       </div>
       <div class="status" id="customerStatus"></div>
       <ul class="list" id="customerResults"></ul>

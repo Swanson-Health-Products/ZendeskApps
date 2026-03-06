@@ -10,6 +10,7 @@ const els = {
   btnSearchCustomer: document.getElementById('btnSearchCustomer'),
   btnCustomerNext: document.getElementById('btnCustomerNext'),
   btnNewCustomer: document.getElementById('btnNewCustomer'),
+  btnClearCustomer: document.getElementById('btnClearCustomer'),
   newCustomerPanel: document.getElementById('newCustomerPanel'),
   newCustomerName: document.getElementById('newCustomerName'),
   newCustomerPhone: document.getElementById('newCustomerPhone'),
@@ -467,6 +468,18 @@ function renderCustomers(customers, selectedId) {
     li.addEventListener('click', () => handleCustomerSelect(c, customers));
     els.customerResults.appendChild(li);
   });
+  syncCustomerSelectionUi(selectedId);
+}
+
+function syncCustomerSelectionUi(selectedId) {
+  const hasSelection = Boolean(String(selectedId || els.customerId?.value || '').trim());
+  if (els.btnClearCustomer) {
+    els.btnClearCustomer.classList.toggle('visible', hasSelection);
+    els.btnClearCustomer.disabled = !hasSelection;
+  }
+  if (els.btnCustomerNext) {
+    els.btnCustomerNext.disabled = !hasSelection;
+  }
 }
 
 function renderCustomerProfile(profile) {
@@ -1945,6 +1958,84 @@ function restoreOrdersSection() {
   }
 }
 
+function resetSelectedCustomerContext(options = {}) {
+  const {
+    keepSearchResults = true,
+    clearSearchInputs = false,
+    clearStatus = false,
+    customerMessage = 'Customer selection cleared. Search again or pick another customer.',
+    draftMessage = 'Select a customer to start or resume a draft.',
+  } = options;
+
+  stopDraftConversionPolling('customer_clear');
+  showConversionPanel(false);
+  els.customerId.value = '';
+  lastCustomerProfile = null;
+  lastOrders = [];
+  lastDraftOrders = [];
+  lastAddresses = [];
+  orderItems = [];
+  lastVariant = null;
+  upsellSuggestions = [];
+  selectedShipState = '';
+  currentAddressValidation = { valid: true, requiresOverride: false, message: '' };
+  draftSubmitInFlight = false;
+
+  if (clearSearchInputs) {
+    [els.firstName, els.lastName, els.email, els.phone, els.tags, els.swansonId].forEach((input) => {
+      if (input) input.value = '';
+    });
+  }
+
+  if (!keepSearchResults) {
+    lastSearchCustomers = [];
+  }
+
+  renderCustomers(lastSearchCustomers, '');
+  renderCustomerProfile(null);
+  renderAddresses(lastAddresses);
+  renderOrders(lastOrders, lastDraftOrders);
+  renderUpsellSuggestions();
+  restoreOrdersSection();
+  setUpsellExpanded(false);
+  setInvoiceUrl('');
+  setTotals(null);
+  clearPromoStatus();
+  setShippingLineFromDraft(null);
+  applyAddressValidationState(null);
+  if (els.addressOverride) els.addressOverride.checked = false;
+  if (els.shippingSpeed) els.shippingSpeed.value = '';
+  if (els.shippingCost) els.shippingCost.value = '';
+  if (els.freeShipping) els.freeShipping.checked = false;
+  if (els.promoCode) els.promoCode.value = '';
+  if (els.draftOrderId) els.draftOrderId.value = '';
+  if (els.sku) els.sku.value = '';
+  if (els.variantPrice) els.variantPrice.value = '';
+  if (els.productResults) els.productResults.innerHTML = '';
+  if (els.skuCard) els.skuCard.style.display = 'none';
+  if (els.ordersList) els.ordersList.innerHTML = '';
+  if (els.shipPreview) {
+    els.shipPreview.value = '';
+    autoSizeShipPreview();
+  }
+  if (els.addressSelect) els.addressSelect.innerHTML = '';
+  if (els.orderItems) els.orderItems.innerHTML = '';
+  setDraftButtonState(false);
+  updateShippingRestrictionWarning();
+
+  if (clearStatus) {
+    setStatus(els.customerStatus, '', '');
+  } else {
+    setStatus(els.customerStatus, customerMessage, 'good');
+  }
+  setStatus(els.ordersStatus, '', '');
+  setStatus(els.addrStatus, '', '');
+  setStatus(els.skuStatus, '', '');
+  setStatus(els.draftStatus, draftMessage, '');
+  setStatus(els.upsellStatus, 'Select a customer to load upsell ideas from prior orders.', '');
+  syncCustomerSelectionUi('');
+}
+
 async function handleCustomerSelect(customer, allCustomers) {
   stopDraftConversionPolling('customer_switch');
   showConversionPanel(false);
@@ -2424,6 +2515,18 @@ if (els.btnCustomerNext) {
     addAuditEntry('module_nav', 'Advanced from Customer to Orders.');
   });
 }
+if (els.btnClearCustomer) {
+  els.btnClearCustomer.addEventListener('click', () => {
+    const clearedId = els.customerId.value.trim();
+    resetSelectedCustomerContext({
+      keepSearchResults: true,
+      customerMessage: 'Customer cleared. Select another result or run a new search.',
+      draftMessage: 'Customer cleared. Select another customer to continue.',
+    });
+    setActiveModule('customer');
+    addAuditEntry('customer_clear', clearedId ? `Cleared selected customer ${clearedId}.` : 'Cleared customer selection.');
+  });
+}
 
 
 els.btnNewCustomer.addEventListener('click', () => {
@@ -2533,20 +2636,11 @@ async function runCustomerSearch() {
     const data = await apiGet(`/search?${params.toString()}`);
     lastSearchCustomers = data.customers || [];
     renderCustomers(lastSearchCustomers);
-    // Reset dependent panels so we don't show stale orders/addresses.
-    lastOrders = [];
-    lastDraftOrders = [];
-    els.ordersList.innerHTML = '';
-    setStatus(els.ordersStatus, '', '');
-    lastAddresses = [];
-    renderAddresses(lastAddresses);
-    renderCustomerProfile(null);
-    upsellSuggestions = [];
-    renderUpsellSuggestions();
-    setStatus(els.upsellStatus, 'Select a customer to load upsell ideas from prior orders.', '');
-    els.shipPreview.value = '';
-    autoSizeShipPreview();
-    updateShippingRestrictionWarning();
+    resetSelectedCustomerContext({
+      keepSearchResults: true,
+      clearStatus: true,
+      draftMessage: 'Select a customer to build a cart.',
+    });
 
     const currentId = els.customerId.value.trim();
     const exactMatch = currentId
@@ -2981,3 +3075,4 @@ setUpsellExpanded(false);
 setStatus(els.upsellStatus, 'Select a customer to load upsell ideas from prior orders.', '');
 renderUpsellSuggestions();
 setActiveModule('customer');
+syncCustomerSelectionUi('');
