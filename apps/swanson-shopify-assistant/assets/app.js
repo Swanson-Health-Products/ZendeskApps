@@ -1226,7 +1226,7 @@ function setUpsellExpanded(expanded) {
   if (!els.upsellPanel || !els.btnUpsellToggle) return;
   els.upsellPanel.style.display = upsellExpanded ? 'block' : 'none';
   els.btnUpsellToggle.setAttribute('aria-expanded', String(upsellExpanded));
-  if (els.upsellCaret) els.upsellCaret.textContent = upsellExpanded ? 'â–¾' : 'â–¸';
+  if (els.upsellCaret) els.upsellCaret.textContent = upsellExpanded ? '\u25BE' : '\u25B8';
 }
 
 function renderUpsellSuggestions() {
@@ -1829,7 +1829,7 @@ function renderOrders(orders, draftOrders) {
           </div>
           ${intelligencePills ? `<div class="order-intelligence">${intelligencePills}</div>` : ''}
         </div>
-        <button class="secondary order-expand-toggle" type="button" aria-label="Expand order details" aria-expanded="false" title="Expand order details">â–¸</button>
+        <button class="secondary order-expand-toggle" type="button" aria-label="Expand order details" aria-expanded="false" title="Expand order details">\u25B8</button>
       </div>
       <div class="order-items" style="display:none;"></div>
       <div class="order-actions">
@@ -2108,7 +2108,7 @@ function renderOrders(orders, draftOrders) {
     const setExpanded = (expanded) => {
       details.style.display = expanded ? 'block' : 'none';
       if (expandToggle) {
-        expandToggle.textContent = expanded ? 'â–¾' : 'â–¸';
+        expandToggle.textContent = expanded ? '\u25BE' : '\u25B8';
         expandToggle.setAttribute('aria-expanded', String(expanded));
         expandToggle.setAttribute('aria-label', expanded ? 'Collapse order details' : 'Expand order details');
         expandToggle.title = expanded ? 'Collapse order details' : 'Expand order details';
@@ -2125,7 +2125,7 @@ function renderOrders(orders, draftOrders) {
             otherDetails.style.display = 'none';
           }
           if (otherToggle) {
-            otherToggle.textContent = 'â–¸';
+            otherToggle.textContent = '\u25B8';
             otherToggle.setAttribute('aria-expanded', 'false');
             otherToggle.setAttribute('aria-label', 'Expand order details');
             otherToggle.title = 'Expand order details';
