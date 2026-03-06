@@ -9,7 +9,6 @@ const els = {
   customerId: document.getElementById('customerId'),
   btnSearchCustomer: document.getElementById('btnSearchCustomer'),
   btnCustomerNext: document.getElementById('btnCustomerNext'),
-  btnSelectFirstCustomer: document.getElementById('btnSelectFirstCustomer'),
   btnNewCustomer: document.getElementById('btnNewCustomer'),
   newCustomerPanel: document.getElementById('newCustomerPanel'),
   newCustomerName: document.getElementById('newCustomerName'),
@@ -455,6 +454,10 @@ function renderCustomers(customers, selectedId) {
   const list = selectedId ? customers.filter((c) => String(c.id) === String(selectedId)) : customers;
   list.forEach((c) => {
     const li = document.createElement('li');
+    li.className = 'customer-result';
+    if (selectedId && String(c.id) === String(selectedId)) {
+      li.classList.add('is-selected');
+    }
     li.innerHTML = `
       <strong>${c.first_name} ${c.last_name}</strong>
       <span class="pill">ID ${c.id}</span>
@@ -2397,7 +2400,6 @@ attachButtonEffects([
   els.btnNewCustomer,
   els.btnNoEmail,
   els.btnCreateCustomer,
-  els.btnSelectFirstCustomer,
   els.navCustomer,
   els.navOrders,
   els.navOrder,
@@ -2531,9 +2533,6 @@ async function runCustomerSearch() {
     const data = await apiGet(`/search?${params.toString()}`);
     lastSearchCustomers = data.customers || [];
     renderCustomers(lastSearchCustomers);
-    if (els.btnSelectFirstCustomer) {
-      els.btnSelectFirstCustomer.style.display = lastSearchCustomers.length ? 'inline-block' : 'none';
-    }
     // Reset dependent panels so we don't show stale orders/addresses.
     lastOrders = [];
     lastDraftOrders = [];
@@ -2567,13 +2566,6 @@ async function runCustomerSearch() {
 }
 
 els.btnSearchCustomer.addEventListener('click', runCustomerSearch);
-
-if (els.btnSelectFirstCustomer) {
-  els.btnSelectFirstCustomer.addEventListener('click', () => {
-    if (!lastSearchCustomers.length) return;
-    handleCustomerSelect(lastSearchCustomers[0], lastSearchCustomers);
-  });
-}
 
 if (els.btnUpsellToggle) {
   els.btnUpsellToggle.addEventListener('click', () => {

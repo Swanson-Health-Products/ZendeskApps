@@ -198,6 +198,25 @@
     }
     .list { margin: 0; padding: 0; list-style: none; }
     .list li { padding: 8px 0; border-bottom: 1px dashed var(--border); }
+    .customer-result {
+      padding: 10px 12px;
+      margin-top: 6px;
+      border: 1px solid transparent;
+      border-radius: 10px;
+      background: #ffffff;
+      transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+    }
+    .customer-result:hover,
+    .customer-result:focus-visible {
+      background: #f4f8ef;
+      border-color: #d7e2c7;
+      box-shadow: 0 4px 12px rgba(51, 70, 28, 0.08);
+    }
+    .customer-result.is-selected {
+      background: #eef5e6;
+      border-color: #c7d9ac;
+      box-shadow: 0 4px 12px rgba(51, 70, 28, 0.1);
+    }
     .customer-profile {
       margin-top: 12px;
       border: 1px solid var(--border);
@@ -963,9 +982,6 @@
       </div>
       <div class="status" id="customerStatus"></div>
       <ul class="list" id="customerResults"></ul>
-      <div class="row" style="margin-top:8px;">
-        <button id="btnSelectFirstCustomer" class="btn-compact secondary" style="display:none;">Select First Result</button>
-      </div>
       <div id="customerProfile" class="customer-profile" style="display:none;">
         <h4>Customer Profile</h4>
         <div id="customerProfileGrid" class="profile-grid"></div>
