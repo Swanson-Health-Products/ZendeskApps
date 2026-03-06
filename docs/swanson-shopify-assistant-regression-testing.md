@@ -1,69 +1,76 @@
-# Swanson Shopify Assistant Regression Testing (Chrome DevTools)
+# Swanson Shopify Assistant Regression Testing (Agent Runbook)
 
 Last updated: 2026-03-06  
-Tooling: Chrome DevTools MCP on live Zendesk Agent Workspace  
-Target ticket: `https://swansonhealthproducts.zendesk.com/agent/tickets/new/1?brand_id=43073659649683`  
+Primary executor: Codex CLI with Chrome DevTools MCP  
+Execution context: embedded app inside Zendesk Agent Workspace only  
+Target ticket baseline: `https://swansonhealthproducts.zendesk.com/agent/tickets/new/1?brand_id=43073659649683`  
 App ID: `1212333`
 
-## Goal
+## Purpose
 
-Run a repeatable regression pass against the embedded Zendesk app after frontend deploys, Lambda deploys, or behavior changes that affect customer lookup, orders, cart, pricing, shipping, promo logic, and backend audit logging.
+This document is written for agent-driven execution, not just human review. Each case is structured so Codex CLI can run it with:
+- explicit setup
+- explicit actions
+- explicit assertions
+- explicit cleanup
+- safe/non-destructive guidance
 
-## Preconditions
+## Agent Execution Rules
 
-- Logged into Zendesk as an agent with access to the app.
-- Testing must happen inside the embedded app in Zendesk Agent Workspace, not by opening the app iframe URL directly.
-- App settings are already configured in Zendesk Admin.
-- If backend changes were deployed, API Gateway and Lambda are already updated before running the UI pass.
+- Always run inside the embedded Zendesk app, never against the standalone iframe URL.
+- Prefer Chrome DevTools MCP for UI verification.
+- Use the backend smoke script only for backend prechecks, not as a replacement for embedded UI validation.
+- Treat production data carefully. Favor non-destructive paths whenever possible.
+- If a case requires a destructive or customer-visible mutation, mark the run output clearly.
+- Capture screenshots when a visible UI change is under test.
+- Inspect network requests when validating draft pricing, promo, source conversion, or draft hydration behavior.
 
-## Test Scope Guide
+## Run Types
 
-Use the smallest test pass that matches the change.
-
-### Smoke Pass
+### Smoke Run
 
 Use after:
-- CSS-only tweaks
+- CSS-only changes
 - copy/text changes
-- button styling/hover changes
-- small frontend layout adjustments
+- hover/focus styling changes
+- minor layout changes
 
-Minimum cases:
-- 1. App boot and navigation
-- 2. Customer search and selection
-- 5. Orders list rendering
-- 7. Order expand/collapse controls
-- 12. Cart SKU lookup and product search
-- 25. Button styling consistency
-- 26. Console sanity
+Run cases:
+- `BOOT-001`
+- `CUST-001`
+- `ORD-001`
+- `ORD-003`
+- `CART-001`
+- `UI-001`
+- `TECH-001`
 
-### Functional Pass
+### Functional Run
 
 Use after:
 - frontend logic changes
 - order rendering changes
 - cart behavior changes
-- promo/source-code UI changes
-- new UX features that do not alter backend contracts
+- new UI features that do not alter backend contracts
 
-Minimum cases:
-- all Smoke Pass cases
-- 3. Clear customer behavior
-- 6. Order intelligence strip
-- 8. Shipment detail rendering
-- 9. Shipment tracking history toggle
-- 10. Draft order open flow
-- 11. Reorder flow
-- 13. Cart line-item controls
-- 14. Manual line-price override
-- 16. Promo code flow
-- 17. Source-code to promo-code conversion
-- 18. BOGO handling
-- 22. Invoice actions and conversion polling
-- 23. Upsell suggestions
-- 24. Replenishment / low-supply callouts
+Run cases:
+- all Smoke Run cases
+- `CUST-002`
+- `ORD-002`
+- `ORD-004`
+- `ORD-005`
+- `ORD-006`
+- `CART-002`
+- `CART-003`
+- `CART-004`
+- `PROMO-001`
+- `PROMO-002`
+- `PROMO-003`
+- `DRAFT-001`
+- `DRAFT-002`
+- `UPSELL-001`
+- `UPSELL-002`
 
-### Exhaustive Pass
+### Exhaustive Run
 
 Use after:
 - Lambda deploys
@@ -72,429 +79,788 @@ Use after:
 - shipping/address validation changes
 - audit logging changes
 - draft create/update payload changes
-- release candidates / production hardening
+- production hardening / release candidates
 
-Minimum cases:
-- all Functional Pass cases
+Run cases:
+- all Functional Run cases
 - backend smoke script
-- 4. Customer creation / duplicate handling
-- 15. Draft create with manual price override
-- 19. Shipping line controls
-- 20. Restricted shipping guard
-- 21. Address validation handling
-- Backend Audit Regression section
+- `CUST-003`
+- `CART-005`
+- `SHIP-001`
+- `SHIP-002`
+- `ADDR-001`
+- `AUDIT-001`
+- `AUDIT-002`
+- `AUDIT-003`
+- `AUDIT-004`
 
-### Quick Rule
+## Test Data Catalog
 
-- frontend-only visual tweak: `Smoke Pass`
-- frontend behavior change: `Functional Pass`
-- backend, pricing, shipping, audit, or draft mutation change: `Exhaustive Pass`
+### TD-001 General customer
+- Customer email: `kevin.wolf@swansonhealth.com`
+- Use for:
+  - customer search
+  - clear customer
+  - orders rendering
+  - cart SKU add
+  - draft open / reorder
+  - general pricing and promo checks
 
-## Recommended Execution Order
+### TD-002 Tracking customer
+- Customer email: `cbarth001@hotmail.com`
+- Key order: `SHP6647478`
+- Use for:
+  - shipment events
+  - expected delivery
+  - tracking history toggle
+  - separator/glyph checks
 
-1. Backend smoke
-- Run:
+### TD-003 Source-code conversion
+- Source code: `INTE3CCA`
+- Expected promo resolution: `SWNMANIA`
+
+### TD-004 Promo
+- Promo code: `SWNMANIA`
+
+### TD-005 BOGO SKU
+- SKU: `SWA030`
+
+### TD-006 Simple SKU for cart/manual pricing
+- Suggested SKU: `SWU114`
+
+## Reset Procedures
+
+### RESET-001 App state reset
+- Navigate to `Customer`
+- Click `Clear Customer` if visible
+- Clear search inputs if the current case requires a fresh lookup
+- Confirm `Next: Orders` is disabled
+
+### RESET-002 Cart reset
+- Navigate to `Cart`
+- If a loaded draft is present, click `New Order` from `Orders` first or clear customer context and reselect customer
+- Remove residual line items if the case requires a clean cart
+- Clear promo code and shipping inputs when needed
+
+### RESET-003 Orders refresh
+- Use Zendesk `Reload all apps` when newly deployed assets must be loaded
+- Re-open the app sidebar section if needed
+
+## Backend Precheck
+
+### PRE-001 Backend smoke
+
+Type: semi-automated  
+Safe: yes
+
+Steps:
+1. Run:
 ```powershell
 powershell -ExecutionPolicy Bypass -File C:\Users\kevin.wolf\ZendeskApps\scripts\run-shopify-assistant-regression.ps1
 ```
-- Expected:
-  - timestamped output in `docs/regression-artifacts/`
-  - non-zero exit code on backend failure
 
-2. Embedded Zendesk UI regression
-- Use Chrome DevTools MCP on the live Zendesk ticket sidebar.
-- Capture screenshots for any visible UI regression.
-- Inspect network requests for create/update draft flows when pricing, promo, or order hydration behavior changes.
+Assertions:
+- exit code is zero
+- report is written to `docs/regression-artifacts/`
 
-3. Backend audit verification
-- Confirm app-originated actions write only to backend audit storage.
-- Confirm the app is not writing internal-note audit messages into the Zendesk composer.
+## Case Format
 
-## Core Regression Matrix
+Each case below uses:
+- `Type`: automated / semi-automated / manual-check-assisted
+- `Safe`: yes / no / conditional
+- `Setup`
+- `Actions`
+- `Assertions`
+- `Cleanup`
 
-### 1. App boot and navigation
+## Boot Cases
 
-Action:
-- Open the ticket sidebar.
-- Expand `Swanson Shopify Assistant`.
-- Confirm `Customer`, `Orders`, and `Cart` navigation is visible.
+### BOOT-001 App boot and navigation
 
-Expected:
-- iframe loads from `1212333.apps.zdusercontent.com`
-- no blocking error banner
-- nav buttons render and switch modules correctly
+Type: automated  
+Safe: yes
 
-### 2. Customer search and selection
+Setup:
+- Open the target Zendesk ticket
+- Expand `Swanson Shopify Assistant`
 
-Action:
-- In `Customer`, verify email prefill when requester context exists.
-- Search by email.
-- Click a returned customer result row.
+Actions:
+1. Wait for iframe/app shell to load
+2. Inspect visible navigation and app framing
 
-Expected:
-- results render with hover styling
-- selected row is visually distinct
-- customer profile loads
-- saved addresses load
-- `Clear Customer` becomes available
-- `Next: Orders` enables only after selection
+Assertions:
+- iframe is loaded from `1212333.apps.zdusercontent.com`
+- `Customer`, `Orders`, and `Cart` navigation buttons are visible
+- no blocking error banner is shown
 
-### 3. Clear customer behavior
+Cleanup:
+- none
 
-Action:
-- With a selected customer, click `Clear Customer`.
+## Customer Cases
 
-Expected:
-- selected customer context resets
-- profile, orders, drafts, cart context, promo state, upsell state, and conversion polling state clear
-- search inputs/results remain available for quick reselection
+### CUST-001 Customer search and selection
+
+Type: automated  
+Safe: yes
+
+Setup:
+- Run `RESET-001`
+- Use `TD-001`
+
+Actions:
+1. Open `Customer`
+2. Verify email input is present
+3. Search for `kevin.wolf@swansonhealth.com`
+4. Click the returned customer result row
+
+Assertions:
+- customer results render
+- selected customer row is visually distinct
+- profile card renders
+- saved addresses render
+- `Clear Customer` is visible
+- `Next: Orders` is enabled
+
+Cleanup:
+- none
+
+### CUST-002 Clear customer behavior
+
+Type: automated  
+Safe: yes
+
+Setup:
+- Complete `CUST-001`
+
+Actions:
+1. Click `Clear Customer`
+
+Assertions:
+- selected customer context clears
+- profile clears
+- orders/drafts/cart context clears
 - `Next: Orders` becomes disabled
+- search results remain usable for reselection
 
-### 4. Customer creation / duplicate handling
+Cleanup:
+- none
 
-Action:
-- Open `New Customer`.
-- Attempt create with valid values.
-- Attempt create using an already-existing phone or email.
+### CUST-003 Customer creation and duplicate handling
 
-Expected:
-- successful create selects the new customer
-- duplicate phone/email path falls back to customer search rather than silent failure
+Type: manual-check-assisted  
+Safe: conditional
 
-### 5. Orders list rendering
+Setup:
+- Run `RESET-001`
 
-Action:
-- Open `Orders` for a selected customer.
+Actions:
+1. Open `New Customer`
+2. Attempt customer creation with test-safe values
+3. Attempt customer creation with an already-existing phone or email
 
-Expected:
-- status line shows loaded order and draft counts
-- `Draft Orders` section renders above `Orders`
-- customer orders default open
-- draft orders default collapsed
-- order cards show:
-  - shipping pill
-  - payment pill
-  - fraud pill
-  - amount
-  - placed/updated dates when available
-  - order number
+Assertions:
+- successful create selects the created customer
+- duplicate path falls back to search instead of silent failure
 
-### 6. Order intelligence strip
+Cleanup:
+- if a new test customer was created, record the identifier in test notes
 
-Action:
-- Inspect multiple order cards.
+## Orders Cases
 
-Expected:
-- compact intelligence pills appear under the order meta row when data is available
-- examples include:
+### ORD-001 Orders list rendering
+
+Type: automated  
+Safe: yes
+
+Setup:
+- Complete `CUST-001`
+
+Actions:
+1. Open `Orders`
+
+Assertions:
+- loaded order and draft counts appear
+- `Draft Orders` renders above `Orders`
+- customer orders are open by default
+- draft orders are collapsed by default
+- each order card shows shipping, payment, fraud, amount, and order number metadata
+
+Cleanup:
+- none
+
+### ORD-002 Order intelligence strip
+
+Type: automated  
+Safe: yes
+
+Setup:
+- Complete `ORD-001`
+
+Actions:
+1. Inspect the first several order cards
+
+Assertions:
+- each card may show intelligence pills when data is available
+- known example pills include:
   - `No shipments yet`
   - `Awaiting fulfillment`
   - `Payment captured`
-  - `Placed 4 weeks ago`
-  - shipment count / delivered / in transit signals where applicable
-- no corrupted glyphs in pills or order controls
+  - relative placed-age text
+- no corrupted glyphs appear in the intelligence strip
 
-### 7. Order expand/collapse controls
+Cleanup:
+- none
 
-Action:
-- Expand and collapse multiple orders.
-- Verify only the selected order opens at a time.
+### ORD-003 Order expand/collapse control
 
-Expected:
-- icon-only chevron button renders correctly
-- no mojibake / corrupted characters
-- expanding one order collapses the others
+Type: automated  
+Safe: yes
 
-### 8. Shipment detail rendering
+Setup:
+- Complete `ORD-001`
 
-Action:
-- Expand an order with fulfillment data.
+Actions:
+1. Expand the first order
+2. Expand the second order
+3. Collapse it again
 
-Expected:
-- shipment cards show:
-  - shipment title/status
-  - tracking number
-  - tracking link
-  - latest update
-  - expected delivery when Shopify provides ETA
-- text separators render correctly as a bullet separator (`\u2022`), not corrupted text
-- long fraud/shipping text wraps inside the card instead of overflowing
+Assertions:
+- chevron icon renders correctly
+- expanding one order collapses the previously open order
+- no mojibake appears in the control text/icon
 
-### 9. Shipment tracking history toggle
+Cleanup:
+- collapse any expanded orders
 
-Action:
-- On an order with tracking events, click `Show tracking history`.
-- Collapse it again.
+### ORD-004 Shipment detail rendering
 
-Expected:
-- tracking history is collapsed by default
-- button toggles to `Hide tracking history` when expanded
-- only the shipment's own event history expands
-- history entries show readable status/date/message formatting
+Type: automated  
+Safe: yes
 
-### 10. Draft order open flow
+Setup:
+- Run `RESET-001`
+- Search/select `TD-002`
+- Open `Orders`
+- Expand order `SHP6647478`
 
-Action:
-- In `Draft Orders`, click `Open Draft`.
+Actions:
+1. Inspect shipment cards on `SHP6647478`
 
-Expected:
-- app switches into cart editing context
-- progress state is visible while loading
+Assertions:
+- shipment title/status appears
+- tracking number appears
+- tracking link appears
+- latest update appears
+- expected delivery appears when provided by Shopify
+- latest update uses a readable bullet separator (`\u2022`)
+- long shipment/fraud text wraps inside the card
+
+Cleanup:
+- none
+
+### ORD-005 Tracking history toggle
+
+Type: automated  
+Safe: yes
+
+Setup:
+- Complete `ORD-004`
+
+Actions:
+1. Click `Show tracking history` for shipment 1
+2. Click it again to collapse
+
+Assertions:
+- shipment history is collapsed by default
+- toggle changes between `Show tracking history` and `Hide tracking history`
+- only the targeted shipment history expands
+
+Cleanup:
+- collapse shipment history
+
+### ORD-006 Reorder flow
+
+Type: automated  
+Safe: conditional
+
+Setup:
+- Complete `ORD-001`
+
+Actions:
+1. Click `Reorder Items` on a recent order
+
+Assertions:
+- app switches to `Cart`
+- cart line items populate
+- line items show sku/title/qty/image context
+
+Cleanup:
+- run `RESET-002` if the next case requires a clean cart
+
+## Draft Cases
+
+### DRAFT-001 Draft open flow
+
+Type: automated  
+Safe: yes
+
+Setup:
+- Complete `ORD-001`
+- Expand `Draft Orders` if needed
+
+Actions:
+1. Click `Open Draft` on an available draft
+
+Assertions:
+- progress state appears while loading
+- cart editing context opens
 - draft order ID populates
-- line items hydrate into cart
-- totals, promo state, shipping line, and address validation state hydrate
-- invoice buttons become usable when invoice URL exists
+- line items, totals, shipping line, and invoice controls hydrate
 
-### 11. Reorder flow
+Cleanup:
+- none
 
-Action:
-- In `Orders`, click `Reorder Items` on a recent order.
+### DRAFT-002 Invoice actions and conversion polling
 
-Expected:
-- cart populates with reorderable items
-- order items include image/title/sku/qty
-- status confirms reorder load success
+Type: manual-check-assisted  
+Safe: conditional
 
-### 12. Cart SKU lookup and product search
+Setup:
+- Complete `DRAFT-001`
+- Require a draft with invoice URL
 
-Action:
-- In `Cart`, search by exact SKU.
-- Search by product term with multiple variants.
+Actions:
+1. Click `Open Invoice`
+2. Click `Copy URL`
+3. Observe the conversion polling panel
 
-Expected:
-- exact SKU lookup shows preview card with image/title/sku/price/inventory
-- multi-result searches show per-result `Add To Order` buttons
-- after add, preview/results clear from the search area
+Assertions:
+- invoice actions succeed
+- polling starts from invoice actions only
+- polling checks every 20 seconds
+- compact in-progress status is visible
+- timeout state, if reached, is non-blocking
 
-### 13. Cart line-item controls
+Cleanup:
+- stop polling if still active
 
-Action:
-- Add at least one SKU.
-- Adjust quantity.
-- Remove a line.
+## Cart Cases
 
-Expected:
-- line items update without stale UI state
-- subtotal/tax/total update correctly in the cart display
+### CART-001 SKU lookup and product search
 
-### 14. Manual line-price override
+Type: automated  
+Safe: yes
 
-Action:
-- Add a SKU to cart.
-- Click the line-item price.
-- Change it to a valid lower value.
-- Save.
-- Then reset to catalog price.
+Setup:
+- Complete `CUST-001`
+- Move to `Cart` through the supported workflow
 
-Expected:
-- inline editor appears with save/cancel controls
-- local totals update immediately after save
-- line shows manual-price indicator and catalog comparison
+Actions:
+1. Search exact SKU `SWU114`
+2. Search a broader product term with multiple results
+
+Assertions:
+- exact SKU search shows a preview card
+- preview card shows image/title/sku/price/inventory when available
+- product search shows per-result `Add To Order` buttons
+
+Cleanup:
+- none
+
+### CART-002 Add-to-order from search results
+
+Type: automated  
+Safe: conditional
+
+Setup:
+- Complete `CART-001`
+
+Actions:
+1. Add a result from exact SKU search
+2. Add a result from multi-result search
+
+Assertions:
+- item is added to cart
+- search preview/results clear after add
+- no stale preview card remains after add
+
+Cleanup:
+- remove extra items if the next case needs a clean cart
+
+### CART-003 Line-item controls
+
+Type: automated  
+Safe: conditional
+
+Setup:
+- Ensure cart contains at least one line item
+
+Actions:
+1. Increase or decrease quantity
+2. Remove a line item
+
+Assertions:
+- cart updates correctly
+- subtotal/tax/total update in the UI
+
+Cleanup:
+- re-add required test SKU if later cases depend on it
+
+### CART-004 Manual line-price override
+
+Type: automated  
+Safe: conditional
+
+Setup:
+- Add `TD-006` to cart
+
+Actions:
+1. Click the line-item price
+2. Enter a lower valid price
+3. Save
+4. Click reset-to-catalog price
+
+Assertions:
+- inline editor appears
+- local totals update immediately on save
+- manual-price indicator and catalog comparison appear
 - reset returns the line to catalog price
 
-### 15. Draft create with manual price override
+Cleanup:
+- leave cart in known state for next case
 
-Action:
-- Create a draft order after applying a manual price override.
-- If possible, reopen or update the same draft and verify the overridden price persisted.
+### CART-005 Draft create/update with manual price override
 
-Expected:
-- backend accepts the override
-- Shopify draft reflects overridden unit price rather than catalog price
-- totals returned from draft match the overridden line price
+Type: manual-check-assisted  
+Safe: conditional
 
-### 16. Promo code flow
+Setup:
+- Add `TD-006` to cart
+- Apply a manual line-price override
 
-Action:
-- Enter a standard promo code.
-- Create or update a draft.
+Actions:
+1. Create or update draft order
+2. Reopen or reload the draft if needed
 
-Expected:
-- promo status clearly reports success or no-discount outcome
-- no stale promo message remains after starting a new order
+Assertions:
+- backend accepts override
+- Shopify draft returns overridden price, not catalog price
+- totals reflect overridden price
+- network request/response can be inspected to verify pricing payload and returned totals
 
-### 17. Source-code to promo-code conversion
+Cleanup:
+- note created draft ID in test output
 
-Action:
-- Enter a known source code (example: `INTE3CCA`).
-- Create or update a draft.
+## Promo Cases
 
-Expected:
-- UI clearly reports source conversion to the resolved promo code
-- fallback behavior still works if source lookup does not resolve and the entered value should be treated as a normal promo code
+### PROMO-001 Standard promo code
 
-### 18. BOGO handling
+Type: automated  
+Safe: conditional
 
-Action:
-- Add a known BOGO SKU (example previously used: `SWA030`).
-- Create or update draft.
+Setup:
+- Cart contains at least one eligible item
+- Use `TD-004`
 
-Expected:
-- BOGO path applies the expected promo handling
-- quantities normalize correctly for BOGO logic
-- promo status communicates BOGO application outcome
+Actions:
+1. Enter promo code `SWNMANIA`
+2. Create or update draft
 
-### 19. Shipping line controls
+Assertions:
+- promo status reports either success or no-discount outcome clearly
+- stale promo status does not persist after starting a new order
 
-Action:
-- Set shipping speed and/or shipping cost.
-- Toggle free shipping.
+Cleanup:
+- clear promo field if needed
 
-Expected:
-- UI updates shipping values correctly
+### PROMO-002 Source-code conversion
+
+Type: automated  
+Safe: conditional
+
+Setup:
+- Cart contains at least one eligible item
+- Use `TD-003`
+
+Actions:
+1. Enter source code `INTE3CCA`
+2. Create or update draft
+
+Assertions:
+- UI reports conversion to promo `SWNMANIA`
+- if no source mapping is returned, entered value is treated as a normal promo path without breaking the workflow
+
+Cleanup:
+- clear promo/source field if needed
+
+### PROMO-003 BOGO handling
+
+Type: manual-check-assisted  
+Safe: conditional
+
+Setup:
+- Clean cart
+- Use `TD-005`
+
+Actions:
+1. Add SKU `SWA030`
+2. Create or update draft
+
+Assertions:
+- BOGO logic applies expected quantity/promo behavior
+- promo status reflects BOGO outcome
+
+Cleanup:
+- note resulting draft state if created
+
+## Shipping and Address Cases
+
+### SHIP-001 Shipping line controls
+
+Type: automated  
+Safe: conditional
+
+Setup:
+- Cart contains at least one item
+
+Actions:
+1. Set shipping speed
+2. Set or inspect shipping cost
+3. Toggle free shipping
+
+Assertions:
+- shipping values update correctly
 - totals update accordingly
 - free shipping clears conflicting paid shipping values when intended
 
-### 20. Restricted shipping guard
+Cleanup:
+- clear shipping settings if next case requires default state
 
-Action:
-- Use a restricted SKU/state combination when available.
-- Attempt draft create/update.
+### SHIP-002 Restricted shipping guard
 
-Expected:
-- draft submission is blocked before mutation
-- clear warning is shown for the restricted state conflict
+Type: manual-check-assisted  
+Safe: conditional
 
-### 21. Address validation handling
+Setup:
+- Requires a known restricted SKU/state combination
 
-Action:
-- Open a draft or create/update a draft that returns address validation summary.
+Actions:
+1. Select shipping state that conflicts with the restricted SKU
+2. Attempt draft create/update
 
-Expected:
-- validation message renders
-- override requirement is enforced before update when needed
+Assertions:
+- draft mutation is blocked before submit
+- warning clearly identifies the restricted-state conflict
 
-### 22. Invoice actions and conversion polling
+Cleanup:
+- remove restricted SKU or reset address selection
 
-Action:
-- On an open draft with invoice URL, click:
-  - `Open Invoice`
-  - `Copy URL`
-- Observe conversion status panel.
+### ADDR-001 Address validation handling
 
-Expected:
-- invoice open/copy actions work
-- conversion polling starts only from invoice actions
-- polling checks every 20 seconds
-- compact in-progress state is visible
-- if conversion completes, status reflects that and `Refresh Orders` is available
-- if conversion never completes, timeout messaging is non-blocking and does not break the agent workflow
+Type: manual-check-assisted  
+Safe: conditional
 
-### 23. Upsell suggestions
+Setup:
+- Open or create a draft that returns address validation summary
 
-Action:
-- In `Cart`, expand the upsell panel for a customer with prior purchase history.
-- Add one upsell suggestion.
+Actions:
+1. Inspect the address validation banner/message
+2. Attempt update if override is required
 
-Expected:
-- upsell list excludes items already in cart
-- only in-stock items are shown
+Assertions:
+- validation summary renders
+- override requirement is enforced before update when necessary
+
+Cleanup:
+- none
+
+## Upsell Cases
+
+### UPSELL-001 Upsell suggestions
+
+Type: automated  
+Safe: conditional
+
+Setup:
+- Select a customer with prior purchase history
+- Open `Cart`
+
+Actions:
+1. Expand upsell panel
+2. Add one upsell suggestion
+
+Assertions:
+- suggestions exclude items already in cart
+- only in-stock suggestions appear
 - one-click add works
-- upsell item disappears from visible suggestions once added to cart
+- added item disappears from visible upsell suggestions
 
-### 24. Replenishment / low-supply callouts
+Cleanup:
+- remove upsell item if next case requires clean cart
 
-Action:
-- Inspect upsell suggestions for a customer with prior consumable purchases.
+### UPSELL-002 Replenishment / low-supply callouts
 
-Expected:
-- when data supports it, suggestions show low-supply / replenishment callouts based on elapsed time and servings-per-container logic
+Type: manual-check-assisted  
+Safe: yes
 
-### 25. Button styling consistency
+Setup:
+- Use a customer with prior consumable purchases
+- Expand upsell panel
 
-Action:
-- Hover major action buttons across modules.
+Actions:
+1. Inspect suggestion metadata and callouts
 
-Expected:
-- hover states are visually consistent
-- dark green hover states retain readable white text
+Assertions:
+- low-supply/replenishment callouts appear when supported by the data
+- callouts are based on elapsed time and servings logic, not random text
+
+Cleanup:
+- none
+
+## UI and Technical Cases
+
+### UI-001 Button styling consistency
+
+Type: automated  
+Safe: yes
+
+Setup:
+- Navigate through `Customer`, `Orders`, and `Cart`
+
+Actions:
+1. Hover primary and secondary buttons across modules
+
+Assertions:
+- hover states are consistent
+- dark green hover states keep readable white text
 - invoice buttons match each other stylistically
 
-### 26. Console sanity
+Cleanup:
+- none
 
-Action:
-- Review console messages while exercising the app.
+### TECH-001 Console sanity
 
-Expected:
+Type: automated  
+Safe: yes
+
+Setup:
+- Exercise the app through search, order open, and cart actions
+
+Actions:
+1. Inspect console output
+
+Assertions:
 - no blocking runtime errors from `Swanson Shopify Assistant`
-- warnings/errors from other Zendesk apps may exist but should be called out separately
+- issues from other apps are noted separately and not misattributed
 
-## Backend Audit Regression
+Cleanup:
+- none
 
-### 1. App-only audit scope
+## Backend Audit Cases
 
-Action:
-- Exercise actions inside this app.
-- Do not interact with AgnoStack during this validation pass.
+### AUDIT-001 App-only audit scope
 
-Expected:
-- backend audit entries reflect actions taken inside this app only
+Type: semi-automated  
+Safe: yes
+
+Setup:
+- Perform actions only inside this app
+- Do not interact with AgnoStack during the validation window
+
+Actions:
+1. Search customer
+2. Select customer
+3. Open or update draft
+4. Add/remove item
+
+Assertions:
+- backend audit contains only actions taken in this app
 - AgnoStack activity should not create `Swanson Shopify Assistant` audit records
 
-### 2. Agent identity capture
+Cleanup:
+- none
 
-Action:
-- Open the app and perform customer/draft actions.
+### AUDIT-002 Agent identity capture
 
-Expected:
-- backend audit events include Zendesk agent context:
-  - agent ID
-  - name
-  - email
-- draft metadata includes `agnoStack-metadata.agent_id` when draft mutations are sent
+Type: semi-automated  
+Safe: yes
 
-### 3. No internal-note audit spam
+Setup:
+- Perform customer/draft actions in the app
 
-Action:
-- Open the app and perform actions.
-- Inspect the Zendesk internal note composer.
+Actions:
+1. Inspect backend audit records and/or request payloads
 
-Expected:
-- no automatic audit/session messages are inserted into the Zendesk note body
+Assertions:
+- agent ID, name, and email are present in backend audit context
+- draft payload includes `agnoStack-metadata.agent_id` when available
+
+Cleanup:
+- none
+
+### AUDIT-003 No internal-note audit spam
+
+Type: automated  
+Safe: yes
+
+Setup:
+- Open app and perform several actions
+
+Actions:
+1. Inspect Zendesk internal note composer body
+
+Assertions:
+- no automatic audit/session entries are inserted into the internal note
 - logging remains backend-only
 
-### 4. Flush behavior
+Cleanup:
+- none
 
-Action:
-- Perform several app actions, then inspect backend audit results.
+### AUDIT-004 Flush behavior
 
-Expected:
-- audit entries batch and flush successfully
-- duplicate spam is not created for rapid repeat actions
+Type: semi-automated  
+Safe: yes
 
-## Suggested Test Data
+Setup:
+- Perform several app actions in a short window
 
-Use real customer/order cases when available:
+Actions:
+1. Inspect backend audit storage/results
 
-- `kevin.wolf@swansonhealth.com`
-  - useful for general customer/cart/draft validation
-- `cbarth001@hotmail.com`
-  - useful for shipment event / expected delivery / tracking history validation
-- order `SHP6647478`
-  - known shipment-event coverage
-- source code `INTE3CCA`
-  - known source-to-promo conversion path
-- promo code `SWNMANIA`
-  - known promo validation path
-- BOGO SKU `SWA030`
-  - known BOGO validation path
+Assertions:
+- entries batch and flush successfully
+- duplicate spam is not created for rapid repeats
 
-## Known Limits / Notes
+Cleanup:
+- none
 
-- Shipment ETA and event history only appear when Shopify/carrier data provides them.
-- Some refund/cancel/hold actions depend on the specific order state returned by Shopify.
-- Large draft orders may still hit Shopify-side performance limits; this regression guide validates current behavior, not Shopify throughput guarantees.
-- When UI encoding regressions are suspected, specifically inspect:
-  - expand/collapse chevrons
-  - bullet separators in shipment updates and tracking history
+## Agent Output Requirements
 
-## Documentation References
+When Codex CLI runs this runbook, output should include:
+- run type used: `Smoke`, `Functional`, or `Exhaustive`
+- cases executed
+- pass/fail per case
+- screenshots captured
+- network requests inspected
+- any destructive/customer-visible mutations performed
+- unresolved blockers or flaky behaviors
+
+## Known Limits
+
+- Shipment ETA and event history appear only when Shopify/carrier data exists.
+- Some refund/cancel/hold actions depend on current Shopify order state.
+- Large draft orders may still hit Shopify-side performance limits.
+- Encoding regressions should always be checked on:
+  - chevron controls
+  - shipment bullet separators
+  - tracking history event lines
+
+## References
 
 - Feature inventory:
   - `docs/swanson-shopify-assistant-features.md`
-- Promo / orders behavior:
+- Promo and orders behavior:
   - `docs/shopify-assistant-promo-pricing-and-orders.md`
 - Deployment guidance:
   - `docs/zendesk-cli-deployment-guidelines.md`
-
 
