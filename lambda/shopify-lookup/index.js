@@ -2648,6 +2648,7 @@ exports.handler = async (event) => {
       let normalizedLineItems = lineItems.map((item) => ({
         variantId: item.variant_id || item.variantId,
         quantity: Number(item.quantity || 1),
+        originalUnitPrice: item.original_unit_price || item.originalUnitPrice,
       })).filter((item) => item.variantId);
 
       if (!normalizedLineItems.length) {

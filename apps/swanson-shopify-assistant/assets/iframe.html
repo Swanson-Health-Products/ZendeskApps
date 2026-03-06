@@ -217,6 +217,22 @@
       border-color: #c7d9ac;
       box-shadow: 0 4px 12px rgba(51, 70, 28, 0.1);
     }
+    .customer-result-copy {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding-left: 8px;
+    }
+    .customer-result-main {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .customer-result-email {
+      color: var(--text);
+      line-height: 1.35;
+    }
     .customer-actions {
       margin-top: 8px;
       align-items: center;
@@ -442,6 +458,58 @@
       font-size: 12px;
       color: #128a4a;
       margin-top: 4px;
+    }
+    .price-edit-trigger {
+      display: inline-flex;
+      align-items: center;
+      padding: 0;
+      min-width: 0;
+      border: none;
+      background: transparent;
+      color: #1f2b37;
+      font: inherit;
+      font-weight: 600;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      cursor: pointer;
+    }
+    .price-edit-trigger.is-manual {
+      color: var(--good);
+    }
+    .price-manual,
+    .price-compare,
+    .price-reset {
+      display: block;
+      margin-top: 4px;
+      font-size: 11px;
+      line-height: 1.3;
+    }
+    .price-manual {
+      color: var(--good);
+      font-weight: 600;
+    }
+    .price-compare,
+    .price-reset {
+      color: var(--muted);
+    }
+    .price-reset {
+      padding: 0;
+      min-width: 0;
+      border: none;
+      background: transparent;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      cursor: pointer;
+    }
+    .price-editor {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .price-input {
+      width: 90px;
+      padding: 6px 8px;
     }
     .order-card {
       border: 1px solid var(--border);

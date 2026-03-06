@@ -460,9 +460,13 @@ function renderCustomers(customers, selectedId) {
       li.classList.add('is-selected');
     }
     li.innerHTML = `
-      <strong>${c.first_name} ${c.last_name}</strong>
-      <span class="pill">ID ${c.id}</span>
-      <div>${c.email || ''}</div>
+      <div class="customer-result-copy">
+        <div class="customer-result-main">
+          <strong>${c.first_name} ${c.last_name}</strong>
+          <span class="pill">ID ${c.id}</span>
+        </div>
+        <div class="customer-result-email">${c.email || ''}</div>
+      </div>
     `;
     li.style.cursor = 'pointer';
     li.addEventListener('click', () => handleCustomerSelect(c, customers));
@@ -893,8 +897,11 @@ function addVariantToCart(variant, qty = 1, source = 'manual') {
       sku: variant.sku,
       title: variant.product?.title || variant.title,
       price: variant.price,
+      original_price: variant.price,
+      catalog_price: variant.price,
       quantity: safeQty,
       bogo: Boolean(variant.bogo),
+      manual_price: false,
       inventory_quantity: variant.inventory_quantity ?? null,
       image_url: variant.image_url || '',
       image_alt: variant.image_alt || '',
@@ -914,6 +921,129 @@ function clearSkuLookupUi() {
   if (els.variantPrice) els.variantPrice.value = '';
 }
 
+function normalizeMoneyInput(value) {
+  const cleaned = String(value || '').replace(/[^0-9.-]/g, '').trim();
+  if (!cleaned) return '';
+  const amount = Number(cleaned);
+  if (!Number.isFinite(amount) || amount < 0) return '';
+  return amount.toFixed(2);
+}
+
+function getLineItemCatalogPrice(item) {
+  const amount = parseMoneyAmount(item?.catalog_price || item?.original_price || item?.price);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function getLineItemUnitPrice(item) {
+  const amount = parseMoneyAmount(item?.price || item?.original_price || item?.catalog_price);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function isManualPriceOverride(item) {
+  if (!item) return false;
+  if (item.manual_price) return true;
+  const current = getLineItemUnitPrice(item);
+  const catalog = parseMoneyAmount(item.catalog_price);
+  return catalog > 0 && Math.abs(current - catalog) >= 0.01;
+}
+
+function updateLocalCartTotals() {
+  if (!els.subtotal || !els.total) return;
+  if (!orderItems.length) {
+    els.subtotal.value = '';
+    if (!parseMoneyAmount(els.totalTax?.value) && !parseMoneyAmount(els.shippingCost?.value)) {
+      els.total.value = '';
+    }
+    return;
+  }
+  const subtotal = orderItems.reduce((sum, item) => {
+    const unit = getLineItemUnitPrice(item);
+    const qty = Math.max(1, Number(item.quantity || 1));
+    const discount = parseMoneyAmount(item.discount_total);
+    const lineTotal = Math.max(0, (unit * qty) - discount);
+    return sum + lineTotal;
+  }, 0);
+  const tax = parseMoneyAmount(els.totalTax?.value);
+  const shipping = parseMoneyAmount(els.shippingCost?.value);
+  els.subtotal.value = subtotal.toFixed(2);
+  els.total.value = (subtotal + tax + shipping).toFixed(2);
+}
+
+function renderPriceEditor(priceCell, item, idx) {
+  const currentValue = (item.price || item.original_price || item.catalog_price || '').toString().replace(/^\$/, '');
+  const showReset = isManualPriceOverride(item);
+  priceCell.innerHTML = `
+    <div class="price-editor">
+      <input class="price-input" type="number" min="0" step="0.01" value="${currentValue}" />
+      <button class="secondary btn-compact" type="button">Save</button>
+      <button class="secondary btn-compact" type="button">Cancel</button>
+    </div>
+    ${showReset ? '<button class="price-reset" type="button">Use catalog price</button>' : ''}
+  `;
+  const input = priceCell.querySelector('.price-input');
+  const [saveBtn, cancelBtn] = priceCell.querySelectorAll('.price-editor button');
+  const resetBtn = priceCell.querySelector('.price-reset');
+  const save = () => {
+    const normalized = normalizeMoneyInput(input.value);
+    if (!normalized) {
+      setStatus(els.draftStatus, 'Enter a valid non-negative price.', 'bad');
+      input.focus();
+      input.select();
+      return;
+    }
+    const catalogPrice = normalizeMoneyInput(item.catalog_price || item.original_price || item.price) || normalized;
+    orderItems[idx] = {
+      ...item,
+      price: normalized,
+      original_price: normalized,
+      catalog_price: catalogPrice,
+      manual_price: Math.abs(parseMoneyAmount(normalized) - parseMoneyAmount(catalogPrice)) >= 0.01,
+      discount_total: '',
+    };
+    setStatus(els.draftStatus, `Updated ${item.sku || item.variantId || 'item'} to $${normalized}.`, 'good');
+    addAuditEntry('line_item_price', `Updated price for ${item.sku || item.variantId || 'item'} to $${normalized}.`);
+    renderOrderItems();
+  };
+  const cancel = () => renderOrderItems();
+  saveBtn.addEventListener('click', save);
+  cancelBtn.addEventListener('click', cancel);
+  input.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      save();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      cancel();
+    }
+  });
+  input.addEventListener('blur', (event) => {
+    const related = event.relatedTarget;
+    if (related === saveBtn || related === cancelBtn || related === resetBtn) return;
+    save();
+  });
+  if (resetBtn) {
+    resetBtn.addEventListener('click', () => {
+      const catalog = normalizeMoneyInput(item.catalog_price || item.original_price || item.price);
+      if (!catalog) {
+        renderOrderItems();
+        return;
+      }
+      orderItems[idx] = {
+        ...item,
+        price: catalog,
+        original_price: catalog,
+        manual_price: false,
+        discount_total: '',
+      };
+      setStatus(els.draftStatus, `Reset ${item.sku || item.variantId || 'item'} to catalog price $${catalog}.`, 'good');
+      addAuditEntry('line_item_price_reset', `Reset price for ${item.sku || item.variantId || 'item'} to catalog $${catalog}.`);
+      renderOrderItems();
+    });
+  }
+  input.focus();
+  input.select();
+}
+
 function renderOrderItems() {
   els.orderItems.innerHTML = '';
   orderItems.forEach((item, idx) => {
@@ -925,7 +1055,7 @@ function renderOrderItems() {
       <td>${imgCell}</td>
       <td>${item.sku}</td>
       <td>${item.title}${item.bogo ? ' (BOGO)' : ''}</td>
-      <td>$${item.price || ''}</td>
+      <td></td>
       <td>${getInventoryBadge(item.inventory_quantity)}</td>
       <td><input class="qty-input" type="number" min="1" value="${item.quantity}"></td>
       <td><button class="secondary">Remove</button></td>
@@ -944,18 +1074,35 @@ function renderOrderItems() {
       renderOrderItems();
     });
     const priceCell = tr.querySelector('td:nth-child(4)');
-    if (Number(item.discount_total || 0) > 0 && item.original_price && item.quantity) {
+    const unitPrice = getLineItemUnitPrice(item);
+    const manualOverride = isManualPriceOverride(item);
+    if (Number(item.discount_total || 0) > 0 && item.original_price && item.quantity && !manualOverride) {
       const unitDiscount = Number(item.discount_total) / Number(item.quantity || 1);
       const discounted = Math.max(0, Number(item.original_price) - unitDiscount);
       priceCell.innerHTML = `
-        <span class="price-strike">$${Number(item.original_price).toFixed(2)}</span>
+        <button class="price-edit-trigger" type="button">$${Number(item.original_price).toFixed(2)}</button>
         <span class="price-new">$${discounted.toFixed(2)}</span>
         <span class="price-savings">Savings: $${Number(unitDiscount).toFixed(2)} each</span>
       `;
+    } else {
+      const catalogPrice = getLineItemCatalogPrice(item);
+      const compareLabel = manualOverride && catalogPrice > 0
+        ? `<span class="price-compare">Catalog: $${catalogPrice.toFixed(2)}</span>`
+        : '';
+      priceCell.innerHTML = `
+        <button class="price-edit-trigger${manualOverride ? ' is-manual' : ''}" type="button">$${unitPrice.toFixed(2)}</button>
+        ${manualOverride ? '<span class="price-manual">Manual price</span>' : ''}
+        ${compareLabel}
+      `;
+    }
+    const priceBtn = priceCell.querySelector('.price-edit-trigger');
+    if (priceBtn) {
+      priceBtn.addEventListener('click', () => renderPriceEditor(priceCell, item, idx));
     }
     els.orderItems.appendChild(tr);
   });
   updateShippingCostDisplay();
+  updateLocalCartTotals();
   renderUpsellSuggestions();
 }
 
@@ -1186,10 +1333,15 @@ function applyDraftDiscountsToCurrentItems(draftOrder) {
     const draftQty = Number(draftNode?.quantity || item.quantity || 1);
     const lineDiscount = parseMoneyAmount(draftNode?.totalDiscountSet?.presentmentMoney?.amount);
     const basePrice = parseMoneyAmount(item.original_price || item.price);
+    const catalogPrice = parseMoneyAmount(item.catalog_price || item.original_price || item.price);
+    const nextPrice = basePrice > 0 ? basePrice.toFixed(2) : item.original_price || item.price || '';
     return {
       ...item,
       quantity: Number.isFinite(draftQty) && draftQty > 0 ? draftQty : item.quantity,
-      original_price: basePrice > 0 ? basePrice.toFixed(2) : item.original_price || item.price || '',
+      price: nextPrice,
+      original_price: nextPrice,
+      catalog_price: catalogPrice > 0 ? catalogPrice.toFixed(2) : item.catalog_price || '',
+      manual_price: catalogPrice > 0 ? Math.abs(parseMoneyAmount(nextPrice) - catalogPrice) >= 0.01 : Boolean(item.manual_price),
       discount_total: lineDiscount > 0 ? lineDiscount.toFixed(2) : '',
     };
   });
@@ -1237,8 +1389,12 @@ async function enrichOrderItemsFromSkus(items) {
           variantId: variant.id || item.variantId || '',
           title: item.fromDraft && item.title ? item.title : (variant.product?.title || variant.title || item.title),
           price: item.fromDraft && item.price ? item.price : (variant.price || item.price),
+          catalog_price: variant.price || item.catalog_price || item.original_price || item.price || '',
           bogo,
           quantity: qty,
+          manual_price: item.fromDraft && item.price
+            ? Math.abs(parseMoneyAmount(item.price) - parseMoneyAmount(variant.price)) >= 0.01
+            : Boolean(item.manual_price),
           inventory_quantity: variant.inventory_quantity ?? item.inventory_quantity ?? null,
           image_url: variant.image_url || item.image_url || '',
           image_alt: variant.image_alt || item.image_alt || '',
@@ -1486,9 +1642,11 @@ function renderOrders(orders, draftOrders) {
           title: node.variant?.product?.title || node.title || node.name || node.variant?.title || '',
           price: node.originalUnitPriceSet?.presentmentMoney?.amount || '',
           original_price: node.originalUnitPriceSet?.presentmentMoney?.amount || '',
+          catalog_price: '',
           discount_total: node.totalDiscountSet?.presentmentMoney?.amount || '',
           currency: node.originalUnitPriceSet?.presentmentMoney?.currencyCode || '',
           quantity: node.quantity || 1,
+          manual_price: false,
           inventory_quantity: null,
           restricted_states: [],
           image_url: node.variant?.image?.url || node.variant?.product?.featuredImage?.url || '',
@@ -2492,9 +2650,11 @@ function updateShippingCostDisplay() {
   const amount = calculateShippingAmount();
   if (amount === null) {
     els.shippingCost.value = '';
+    updateLocalCartTotals();
     return;
   }
   els.shippingCost.value = Number(amount).toFixed(2);
+  updateLocalCartTotals();
 }
 
 function setDraftButtonState(isUpdate) {
@@ -2986,7 +3146,11 @@ els.btnCreateDraft.addEventListener('click', async () => {
     if (isUpdate) {
       const payload = {
         draft_order_id: els.draftOrderId.value.trim(),
-        line_items: orderItems.map((item) => ({ variant_id: item.variantId, quantity: item.quantity })),
+        line_items: orderItems.map((item) => {
+          const line = { variant_id: item.variantId, quantity: item.quantity };
+          if (item.manual_price || item.fromDraft) line.original_unit_price = item.price;
+          return line;
+        }),
       };
       if (auditState.actorId) {
         payload.metadata = { 'agnoStack-metadata.agent_id': String(auditState.actorId).trim() };
@@ -3028,7 +3192,11 @@ els.btnCreateDraft.addEventListener('click', async () => {
 
     const payload = {
       customer_id: customerId,
-      line_items: orderItems.map((item) => ({ variant_id: item.variantId, quantity: item.quantity })),
+      line_items: orderItems.map((item) => {
+        const line = { variant_id: item.variantId, quantity: item.quantity };
+        if (item.manual_price) line.original_unit_price = item.price;
+        return line;
+      }),
       note: 'Swanson Shopify Assistant',
     };
     if (auditState.actorId) {
