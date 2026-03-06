@@ -797,9 +797,22 @@ function renderSkuCard(variant) {
       <div>
         <div><strong>${variant.product?.title || variant.title}</strong></div>
         <div class="status">SKU ${variant.sku} - $${variant.price} ${bogo} ${restrictedLabel} ${inventoryBadge}</div>
+        <div class="row" style="margin-top:8px;">
+          <button type="button" class="btn-compact secondary" data-role="add-variant-card">Add To Order</button>
+        </div>
       </div>
     </div>
   `;
+  const addBtn = els.skuCard.querySelector('[data-role="add-variant-card"]');
+  if (addBtn) {
+    addBtn.addEventListener('click', () => {
+      const qty = Math.max(1, Number(els.skuQty?.value || 1));
+      if (addVariantToCart(variant, qty, 'sku-card')) {
+        clearSkuLookupUi();
+        setStatus(els.skuStatus, 'Added to order.', 'good');
+      }
+    });
+  }
 }
 
 function renderProductResults(variants) {
@@ -808,7 +821,7 @@ function renderProductResults(variants) {
     els.productResults.innerHTML = '';
     return;
   }
-  const items = variants.slice(0, 10).map((variant) => {
+  const items = variants.slice(0, 10).map((variant, index) => {
     const img = variant.image_url || variant.product?.featuredImage?.url || '';
     const title = variant.product?.title || variant.title || '';
     const sku = variant.sku || '';
@@ -822,19 +835,23 @@ function renderProductResults(variants) {
             <div style="font-weight:600;">${title}</div>
             <div style="font-size:12px; color:#556;">${sku} ${price} ${inventory}</div>
           </div>
-          <button class="btn-compact secondary" data-sku="${sku}">Use SKU</button>
+          <button class="btn-compact secondary" data-index="${index}">Add To Order</button>
         </div>
       </li>
     `;
   }).join('');
   els.productResults.innerHTML = `<ul class="list">${items}</ul>`;
-  Array.from(els.productResults.querySelectorAll('button[data-sku]')).forEach((btn) => {
-    btn.addEventListener('click', async () => {
-      const sku = btn.getAttribute('data-sku') || '';
-      if (!sku) return;
-      els.sku.value = sku;
-      els.productResults.innerHTML = '';
-      await lookupSkuAndRender(sku);
+  Array.from(els.productResults.querySelectorAll('button[data-index]')).forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const index = Number(btn.getAttribute('data-index'));
+      const variant = variants[index];
+      if (!variant) return;
+      const qty = Math.max(1, Number(els.skuQty?.value || 1));
+      if (addVariantToCart(variant, qty, 'product-search')) {
+        els.sku.value = variant.sku || '';
+        clearSkuLookupUi();
+        setStatus(els.skuStatus, 'Added to order.', 'good');
+      }
     });
   });
 }
@@ -888,6 +905,13 @@ function addVariantToCart(variant, qty = 1, source = 'manual') {
   updateShippingRestrictionWarning();
   addAuditEntry('line_item_add', `Added SKU ${variant.sku || ''} qty ${safeQty}${variant.bogo ? ' (BOGO)' : ''} via ${source}.`);
   return true;
+}
+
+function clearSkuLookupUi() {
+  lastVariant = null;
+  renderSkuCard(null);
+  if (els.productResults) els.productResults.innerHTML = '';
+  if (els.variantPrice) els.variantPrice.value = '';
 }
 
 function renderOrderItems() {
@@ -2916,8 +2940,10 @@ els.btnAddSku.addEventListener('click', () => {
     return;
   }
   const qty = Math.max(1, Number(els.skuQty.value || 1));
-  addVariantToCart(lastVariant, qty, 'manual');
-  setStatus(els.skuStatus, 'Added to order.', 'good');
+  if (addVariantToCart(lastVariant, qty, 'manual')) {
+    clearSkuLookupUi();
+    setStatus(els.skuStatus, 'Added to order.', 'good');
+  }
 });
 
 els.btnCreateDraft.addEventListener('click', async () => {
