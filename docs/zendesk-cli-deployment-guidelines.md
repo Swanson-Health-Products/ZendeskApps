@@ -50,13 +50,19 @@ $env:ZENDESK_API_TOKEN='<api_token>'
 Official precedence is:
 1. CLI flags
 2. Environment variables
-3. `~/.config/zcli/config.json`
+3. Active profile in `C:\Users\kevin.wolf\.zcli` plus the OS secure credential store
+
+For the currently installed `zcli` build on this machine:
+- `C:\Users\kevin.wolf\.zcli` stores `activeProfile`
+- the credential secret itself is stored via `keytar` in the OS secure store
+- if `ZENDESK_SUBDOMAIN`, `ZENDESK_EMAIL`, and `ZENDESK_API_TOKEN` are present, `zcli` ignores the saved profile and authenticates from env vars
 
 If using WSL, avoid env-var auth for Windows-hosted credentials and prefer profile/config auth.
 
 ## Recommended Local Setup (Best Practice)
 - Use a pinned `zcli` version in `npx` commands for reproducible behavior.
 - Keep `zcli.apps.config.json` in each app folder for stable `apps:update`.
+- Prefer one-time `zcli login -i` for durable local auth, or seed the secure store from existing `ZENDESK_*` env vars if those are already managed outside the repo.
 - Keep npm online mode enabled for CLI fetches:
 ```powershell
 "offline=false`nprefer-offline=false`n" | Set-Content "$HOME\.npmrc" -Encoding ascii
