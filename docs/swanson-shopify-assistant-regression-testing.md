@@ -16,6 +16,80 @@ Run a repeatable regression pass against the embedded Zendesk app after frontend
 - App settings are already configured in Zendesk Admin.
 - If backend changes were deployed, API Gateway and Lambda are already updated before running the UI pass.
 
+## Test Scope Guide
+
+Use the smallest test pass that matches the change.
+
+### Smoke Pass
+
+Use after:
+- CSS-only tweaks
+- copy/text changes
+- button styling/hover changes
+- small frontend layout adjustments
+
+Minimum cases:
+- 1. App boot and navigation
+- 2. Customer search and selection
+- 5. Orders list rendering
+- 7. Order expand/collapse controls
+- 12. Cart SKU lookup and product search
+- 25. Button styling consistency
+- 26. Console sanity
+
+### Functional Pass
+
+Use after:
+- frontend logic changes
+- order rendering changes
+- cart behavior changes
+- promo/source-code UI changes
+- new UX features that do not alter backend contracts
+
+Minimum cases:
+- all Smoke Pass cases
+- 3. Clear customer behavior
+- 6. Order intelligence strip
+- 8. Shipment detail rendering
+- 9. Shipment tracking history toggle
+- 10. Draft order open flow
+- 11. Reorder flow
+- 13. Cart line-item controls
+- 14. Manual line-price override
+- 16. Promo code flow
+- 17. Source-code to promo-code conversion
+- 18. BOGO handling
+- 22. Invoice actions and conversion polling
+- 23. Upsell suggestions
+- 24. Replenishment / low-supply callouts
+
+### Exhaustive Pass
+
+Use after:
+- Lambda deploys
+- Shopify payload changes
+- pricing logic changes
+- shipping/address validation changes
+- audit logging changes
+- draft create/update payload changes
+- release candidates / production hardening
+
+Minimum cases:
+- all Functional Pass cases
+- backend smoke script
+- 4. Customer creation / duplicate handling
+- 15. Draft create with manual price override
+- 19. Shipping line controls
+- 20. Restricted shipping guard
+- 21. Address validation handling
+- Backend Audit Regression section
+
+### Quick Rule
+
+- frontend-only visual tweak: `Smoke Pass`
+- frontend behavior change: `Functional Pass`
+- backend, pricing, shipping, audit, or draft mutation change: `Exhaustive Pass`
+
 ## Recommended Execution Order
 
 1. Backend smoke
@@ -422,4 +496,5 @@ Use real customer/order cases when available:
   - `docs/shopify-assistant-promo-pricing-and-orders.md`
 - Deployment guidance:
   - `docs/zendesk-cli-deployment-guidelines.md`
+
 
