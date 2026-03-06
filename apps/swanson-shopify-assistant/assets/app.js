@@ -1295,6 +1295,13 @@ function summarizeShipmentUpdate(shipment) {
   return '';
 }
 
+function getShipmentExpectedDelivery(shipment) {
+  if (!shipment || typeof shipment !== 'object') return '';
+  const events = Array.isArray(shipment.events) ? shipment.events : [];
+  const eventEta = events.find((event) => event && event.estimated_delivery_at)?.estimated_delivery_at;
+  return formatOrderDateTime(eventEta || shipment.estimated_delivery_at);
+}
+
 function formatFraudLevel(value) {
   const raw = String(value || '').trim().toUpperCase();
   if (!raw || raw === 'UNKNOWN') return 'Not Available';
@@ -1648,10 +1655,23 @@ function renderOrders(orders, draftOrders) {
             update.textContent = `Latest update: ${latestUpdate}`;
             shipmentCard.appendChild(update);
           }
+          const expectedDelivery = getShipmentExpectedDelivery(shipment);
+          if (expectedDelivery) {
+            const eta = document.createElement('div');
+            eta.className = 'shipment-eta';
+            eta.textContent = `Expected delivery: ${expectedDelivery}`;
+            shipmentCard.appendChild(eta);
+          }
           const shipmentEvents = Array.isArray(shipment.events) ? shipment.events : [];
           if (shipmentEvents.length) {
+            const toggle = document.createElement('button');
+            toggle.type = 'button';
+            toggle.className = 'secondary shipment-history-toggle';
+            toggle.textContent = 'Show tracking history';
+            toggle.setAttribute('aria-expanded', 'false');
             const eventWrap = document.createElement('div');
             eventWrap.className = 'shipment-event-list';
+            eventWrap.style.display = 'none';
             shipmentEvents.slice(0, 4).forEach((event) => {
               const label = formatFulfillmentEventLabel(event.status);
               const message = String(event.message || '').trim();
@@ -1666,6 +1686,13 @@ function renderOrders(orders, draftOrders) {
               line.textContent = parts.join(' • ');
               eventWrap.appendChild(line);
             });
+            toggle.addEventListener('click', () => {
+              const expanded = eventWrap.style.display !== 'none';
+              eventWrap.style.display = expanded ? 'none' : 'grid';
+              toggle.textContent = expanded ? 'Show tracking history' : 'Hide tracking history';
+              toggle.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+            });
+            shipmentCard.appendChild(toggle);
             shipmentCard.appendChild(eventWrap);
           }
         } else {
