@@ -2388,6 +2388,16 @@ function normalizeShippingLineInput(input) {
   };
 }
 
+function normalizeDraftLinePriceOverride(value, currencyCode = "USD") {
+  if (value === undefined || value === null || value === "") return null;
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0) return null;
+  return {
+    amount: amount.toFixed(2),
+    currencyCode: String(currencyCode || "USD").trim().toUpperCase() || "USD",
+  };
+}
+
 function buildDraftCustomAttributes(body) {
   if (!body || typeof body !== "object") return [];
   const attributes = [];
@@ -2473,12 +2483,21 @@ exports.handler = async (event) => {
       if (!lineItems.length) {
         return respond(400, { error: "line_items required" });
       }
+      const presentmentCurrencyCode = String(body.presentment_currency_code || body.presentmentCurrencyCode || "USD").trim().toUpperCase() || "USD";
 
       let normalizedLineItems = lineItems.map((item) => ({
         variantId: item.variant_id || item.variantId,
         quantity: Number(item.quantity || 1),
         title: item.title,
-        originalUnitPrice: item.original_unit_price || item.originalUnitPrice,
+        priceOverride: normalizeDraftLinePriceOverride(
+          item.price_override?.amount
+            || item.priceOverride?.amount
+            || item.original_unit_price
+            || item.originalUnitPrice,
+          item.price_override?.currencyCode
+            || item.priceOverride?.currencyCode
+            || presentmentCurrencyCode
+        ),
       })).filter((item) => item.variantId);
 
       if (!normalizedLineItems.length) {
@@ -2644,11 +2663,20 @@ exports.handler = async (event) => {
         return respond(400, { error: "line_items required" });
       }
       console.log(`[draft_order_update] items=${lineItems.length}`);
+      const presentmentCurrencyCode = String(body.presentment_currency_code || body.presentmentCurrencyCode || "USD").trim().toUpperCase() || "USD";
 
       let normalizedLineItems = lineItems.map((item) => ({
         variantId: item.variant_id || item.variantId,
         quantity: Number(item.quantity || 1),
-        originalUnitPrice: item.original_unit_price || item.originalUnitPrice,
+        priceOverride: normalizeDraftLinePriceOverride(
+          item.price_override?.amount
+            || item.priceOverride?.amount
+            || item.original_unit_price
+            || item.originalUnitPrice,
+          item.price_override?.currencyCode
+            || item.priceOverride?.currencyCode
+            || presentmentCurrencyCode
+        ),
       })).filter((item) => item.variantId);
 
       if (!normalizedLineItems.length) {
