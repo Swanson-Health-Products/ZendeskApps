@@ -1,260 +1,425 @@
 # Swanson Shopify Assistant Regression Testing (Chrome DevTools)
 
-Last executed: 2026-03-03  
+Last updated: 2026-03-06  
 Tooling: Chrome DevTools MCP on live Zendesk Agent Workspace  
 Target ticket: `https://swansonhealthproducts.zendesk.com/agent/tickets/new/1?brand_id=43073659649683`  
-App ID: `1212333`  
-Deployed asset observed: `.../assets/1772566084-8a9e2c4605f092d06ef283077c8348ad/iframe.html`
+App ID: `1212333`
 
 ## Goal
 
-Run non-destructive regression checks directly in the live app iframe through Chrome DevTools and capture pass/fail status.
+Run a repeatable regression pass against the embedded Zendesk app after frontend deploys, Lambda deploys, or behavior changes that affect customer lookup, orders, cart, pricing, shipping, promo logic, and backend audit logging.
 
 ## Preconditions
 
-- Logged into Zendesk as agent.
-- Apps panel open and `Swanson Shopify Assistant` expanded.
-- App settings already configured in Zendesk Admin.
+- Logged into Zendesk as an agent with access to the app.
+- Testing must happen inside the embedded app in Zendesk Agent Workspace, not by opening the app iframe URL directly.
+- App settings are already configured in Zendesk Admin.
+- If backend changes were deployed, API Gateway and Lambda are already updated before running the UI pass.
 
-## Repeatable Execution Path
+## Recommended Execution Order
 
-Use a two-phase regression flow after each backend deploy:
-
-1. Automated backend smoke
+1. Backend smoke
 - Run:
 ```powershell
 powershell -ExecutionPolicy Bypass -File C:\Users\kevin.wolf\ZendeskApps\scripts\run-shopify-assistant-regression.ps1
 ```
-- Output:
-  - timestamped report in `docs/regression-artifacts/`
-  - non-zero exit code if any backend smoke case fails
-
-2. Embedded Zendesk E2E checks (manual via Chrome DevTools)
-- Run the `DevTools Regression Cases` below in the live ticket sidebar context.
-- Attach results/screenshots to the deployment note or issue comment.
-
-## DevTools Regression Cases
-
-1. Iframe boot and module chrome
-- Action:
-  - Verify iframe exists with `1212333.apps.zdusercontent.com` source.
-  - Verify header and nav buttons (`Customer`, `Orders`, `Cart`) render.
 - Expected:
-  - iframe present and reachable
-  - module navigation visible
+  - timestamped output in `docs/regression-artifacts/`
+  - non-zero exit code on backend failure
 
-2. Customer prefill and search
-- Action:
-  - In `Customer` module, verify email prefill.
-  - Click `Search`.
-- Expected:
-  - customer results render
-  - profile card and addresses render
+2. Embedded Zendesk UI regression
+- Use Chrome DevTools MCP on the live Zendesk ticket sidebar.
+- Capture screenshots for any visible UI regression.
+- Inspect network requests for create/update draft flows when pricing, promo, or order hydration behavior changes.
 
-3. Orders list rendering
-- Action:
-  - Click `Orders`.
-- Expected:
-  - status shows loaded order/draft counts
-  - draft rows render (`Open Draft`, `Invoice`)
-  - order rows render with shipping/payment/fraud pills and action buttons
+3. Backend audit verification
+- Confirm app-originated actions write only to backend audit storage.
+- Confirm the app is not writing internal-note audit messages into the Zendesk composer.
 
-4. Minimize/restore regression (`New Order` path)
-- Action:
-  1. In `Orders`, click `New Order` (moves to `Cart`)
-  2. Return to `Customer`, click `Search`
-  3. Return to `Orders`
-- Expected:
-  - orders list is visible again
-  - no stuck hidden/minimized orders panel
+## Core Regression Matrix
 
-5. Reorder -> cart transition
-- Action:
-  - In `Orders`, click `Reorder Items` on a recent order.
-- Expected:
-  - app switches to `Cart`
-  - draft builder table populates line items
-  - status shows loading/loaded text
+### 1. App boot and navigation
 
-6. Draft load from Orders
-- Action:
-  - In `Orders`, click `Open Draft`.
-- Expected:
-  - app switches to `Cart`
-  - draft items hydrate
-  - status similar to `Loaded #Dxxxx for editing.`
+Action:
+- Open the ticket sidebar.
+- Expand `Swanson Shopify Assistant`.
+- Confirm `Customer`, `Orders`, and `Cart` navigation is visible.
 
-7. Console sanity (app-specific)
-- Action:
-  - Inspect page console messages.
-- Expected:
-  - no blocking runtime errors from `Swanson Shopify Assistant`
-  - external warnings from other apps are acceptable
+Expected:
+- iframe loads from `1212333.apps.zdusercontent.com`
+- no blocking error banner
+- nav buttons render and switch modules correctly
 
-8. Promo outcome visibility
-- Action:
-  1. In `Cart`, enter a promo code.
-  2. Create or update a draft order.
-  3. Inspect `#promoStatus` text.
-- Expected:
-  - when discount > 0: `Promo <CODE> applied: -$X.XX.`
-  - when discount = 0 with promo entered: `Promo <CODE> was sent, but no discount was returned for current items.`
-  - no stale promo status when `New Order` is started
+### 2. Customer search and selection
 
-## Results (2026-03-03)
+Action:
+- In `Customer`, verify email prefill when requester context exists.
+- Search by email.
+- Click a returned customer result row.
 
-- Case 1: PASS
-- Case 2: PASS
-- Case 3: PASS
-- Case 4: PASS
-- Case 5: PASS
-- Case 6: PASS
-- Case 7: PASS (no blocking Swanson app errors observed)
-- Case 8: PASS (`Promo CEO40SW applied: -$8.32.` observed on new draft `#D33270`)
+Expected:
+- results render with hover styling
+- selected row is visually distinct
+- customer profile loads
+- saved addresses load
+- `Clear Customer` becomes available
+- `Next: Orders` enables only after selection
 
-Notes:
-- Console warnings were primarily from `Shopify Premium for Zendesk` and platform integrations, not from `Swanson Shopify Assistant`.
-- Promo pricing mutation roundtrip was intentionally non-destructive in this run. Promo behavior expectations are documented in:
+### 3. Clear customer behavior
+
+Action:
+- With a selected customer, click `Clear Customer`.
+
+Expected:
+- selected customer context resets
+- profile, orders, drafts, cart context, promo state, upsell state, and conversion polling state clear
+- search inputs/results remain available for quick reselection
+- `Next: Orders` becomes disabled
+
+### 4. Customer creation / duplicate handling
+
+Action:
+- Open `New Customer`.
+- Attempt create with valid values.
+- Attempt create using an already-existing phone or email.
+
+Expected:
+- successful create selects the new customer
+- duplicate phone/email path falls back to customer search rather than silent failure
+
+### 5. Orders list rendering
+
+Action:
+- Open `Orders` for a selected customer.
+
+Expected:
+- status line shows loaded order and draft counts
+- `Draft Orders` section renders above `Orders`
+- customer orders default open
+- draft orders default collapsed
+- order cards show:
+  - shipping pill
+  - payment pill
+  - fraud pill
+  - amount
+  - placed/updated dates when available
+  - order number
+
+### 6. Order intelligence strip
+
+Action:
+- Inspect multiple order cards.
+
+Expected:
+- compact intelligence pills appear under the order meta row when data is available
+- examples include:
+  - `No shipments yet`
+  - `Awaiting fulfillment`
+  - `Payment captured`
+  - `Placed 4 weeks ago`
+  - shipment count / delivered / in transit signals where applicable
+- no corrupted glyphs in pills or order controls
+
+### 7. Order expand/collapse controls
+
+Action:
+- Expand and collapse multiple orders.
+- Verify only the selected order opens at a time.
+
+Expected:
+- icon-only chevron button renders correctly
+- no mojibake / corrupted characters
+- expanding one order collapses the others
+
+### 8. Shipment detail rendering
+
+Action:
+- Expand an order with fulfillment data.
+
+Expected:
+- shipment cards show:
+  - shipment title/status
+  - tracking number
+  - tracking link
+  - latest update
+  - expected delivery when Shopify provides ETA
+- text separators render correctly as a bullet separator (`\u2022`), not corrupted text
+- long fraud/shipping text wraps inside the card instead of overflowing
+
+### 9. Shipment tracking history toggle
+
+Action:
+- On an order with tracking events, click `Show tracking history`.
+- Collapse it again.
+
+Expected:
+- tracking history is collapsed by default
+- button toggles to `Hide tracking history` when expanded
+- only the shipment's own event history expands
+- history entries show readable status/date/message formatting
+
+### 10. Draft order open flow
+
+Action:
+- In `Draft Orders`, click `Open Draft`.
+
+Expected:
+- app switches into cart editing context
+- progress state is visible while loading
+- draft order ID populates
+- line items hydrate into cart
+- totals, promo state, shipping line, and address validation state hydrate
+- invoice buttons become usable when invoice URL exists
+
+### 11. Reorder flow
+
+Action:
+- In `Orders`, click `Reorder Items` on a recent order.
+
+Expected:
+- cart populates with reorderable items
+- order items include image/title/sku/qty
+- status confirms reorder load success
+
+### 12. Cart SKU lookup and product search
+
+Action:
+- In `Cart`, search by exact SKU.
+- Search by product term with multiple variants.
+
+Expected:
+- exact SKU lookup shows preview card with image/title/sku/price/inventory
+- multi-result searches show per-result `Add To Order` buttons
+- after add, preview/results clear from the search area
+
+### 13. Cart line-item controls
+
+Action:
+- Add at least one SKU.
+- Adjust quantity.
+- Remove a line.
+
+Expected:
+- line items update without stale UI state
+- subtotal/tax/total update correctly in the cart display
+
+### 14. Manual line-price override
+
+Action:
+- Add a SKU to cart.
+- Click the line-item price.
+- Change it to a valid lower value.
+- Save.
+- Then reset to catalog price.
+
+Expected:
+- inline editor appears with save/cancel controls
+- local totals update immediately after save
+- line shows manual-price indicator and catalog comparison
+- reset returns the line to catalog price
+
+### 15. Draft create with manual price override
+
+Action:
+- Create a draft order after applying a manual price override.
+- If possible, reopen or update the same draft and verify the overridden price persisted.
+
+Expected:
+- backend accepts the override
+- Shopify draft reflects overridden unit price rather than catalog price
+- totals returned from draft match the overridden line price
+
+### 16. Promo code flow
+
+Action:
+- Enter a standard promo code.
+- Create or update a draft.
+
+Expected:
+- promo status clearly reports success or no-discount outcome
+- no stale promo message remains after starting a new order
+
+### 17. Source-code to promo-code conversion
+
+Action:
+- Enter a known source code (example: `INTE3CCA`).
+- Create or update a draft.
+
+Expected:
+- UI clearly reports source conversion to the resolved promo code
+- fallback behavior still works if source lookup does not resolve and the entered value should be treated as a normal promo code
+
+### 18. BOGO handling
+
+Action:
+- Add a known BOGO SKU (example previously used: `SWA030`).
+- Create or update draft.
+
+Expected:
+- BOGO path applies the expected promo handling
+- quantities normalize correctly for BOGO logic
+- promo status communicates BOGO application outcome
+
+### 19. Shipping line controls
+
+Action:
+- Set shipping speed and/or shipping cost.
+- Toggle free shipping.
+
+Expected:
+- UI updates shipping values correctly
+- totals update accordingly
+- free shipping clears conflicting paid shipping values when intended
+
+### 20. Restricted shipping guard
+
+Action:
+- Use a restricted SKU/state combination when available.
+- Attempt draft create/update.
+
+Expected:
+- draft submission is blocked before mutation
+- clear warning is shown for the restricted state conflict
+
+### 21. Address validation handling
+
+Action:
+- Open a draft or create/update a draft that returns address validation summary.
+
+Expected:
+- validation message renders
+- override requirement is enforced before update when needed
+
+### 22. Invoice actions and conversion polling
+
+Action:
+- On an open draft with invoice URL, click:
+  - `Open Invoice`
+  - `Copy URL`
+- Observe conversion status panel.
+
+Expected:
+- invoice open/copy actions work
+- conversion polling starts only from invoice actions
+- polling checks every 20 seconds
+- compact in-progress state is visible
+- if conversion completes, status reflects that and `Refresh Orders` is available
+- if conversion never completes, timeout messaging is non-blocking and does not break the agent workflow
+
+### 23. Upsell suggestions
+
+Action:
+- In `Cart`, expand the upsell panel for a customer with prior purchase history.
+- Add one upsell suggestion.
+
+Expected:
+- upsell list excludes items already in cart
+- only in-stock items are shown
+- one-click add works
+- upsell item disappears from visible suggestions once added to cart
+
+### 24. Replenishment / low-supply callouts
+
+Action:
+- Inspect upsell suggestions for a customer with prior consumable purchases.
+
+Expected:
+- when data supports it, suggestions show low-supply / replenishment callouts based on elapsed time and servings-per-container logic
+
+### 25. Button styling consistency
+
+Action:
+- Hover major action buttons across modules.
+
+Expected:
+- hover states are visually consistent
+- dark green hover states retain readable white text
+- invoice buttons match each other stylistically
+
+### 26. Console sanity
+
+Action:
+- Review console messages while exercising the app.
+
+Expected:
+- no blocking runtime errors from `Swanson Shopify Assistant`
+- warnings/errors from other Zendesk apps may exist but should be called out separately
+
+## Backend Audit Regression
+
+### 1. App-only audit scope
+
+Action:
+- Exercise actions inside this app.
+- Do not interact with AgnoStack during this validation pass.
+
+Expected:
+- backend audit entries reflect actions taken inside this app only
+- AgnoStack activity should not create `Swanson Shopify Assistant` audit records
+
+### 2. Agent identity capture
+
+Action:
+- Open the app and perform customer/draft actions.
+
+Expected:
+- backend audit events include Zendesk agent context:
+  - agent ID
+  - name
+  - email
+- draft metadata includes `agnoStack-metadata.agent_id` when draft mutations are sent
+
+### 3. No internal-note audit spam
+
+Action:
+- Open the app and perform actions.
+- Inspect the Zendesk internal note composer.
+
+Expected:
+- no automatic audit/session messages are inserted into the Zendesk note body
+- logging remains backend-only
+
+### 4. Flush behavior
+
+Action:
+- Perform several app actions, then inspect backend audit results.
+
+Expected:
+- audit entries batch and flush successfully
+- duplicate spam is not created for rapid repeat actions
+
+## Suggested Test Data
+
+Use real customer/order cases when available:
+
+- `kevin.wolf@swansonhealth.com`
+  - useful for general customer/cart/draft validation
+- `cbarth001@hotmail.com`
+  - useful for shipment event / expected delivery / tracking history validation
+- order `SHP6647478`
+  - known shipment-event coverage
+- source code `INTE3CCA`
+  - known source-to-promo conversion path
+- promo code `SWNMANIA`
+  - known promo validation path
+- BOGO SKU `SWA030`
+  - known BOGO validation path
+
+## Known Limits / Notes
+
+- Shipment ETA and event history only appear when Shopify/carrier data provides them.
+- Some refund/cancel/hold actions depend on the specific order state returned by Shopify.
+- Large draft orders may still hit Shopify-side performance limits; this regression guide validates current behavior, not Shopify throughput guarantees.
+- When UI encoding regressions are suspected, specifically inspect:
+  - expand/collapse chevrons
+  - bullet separators in shipment updates and tracking history
+
+## Documentation References
+
+- Feature inventory:
+  - `docs/swanson-shopify-assistant-features.md`
+- Promo / orders behavior:
   - `docs/shopify-assistant-promo-pricing-and-orders.md`
+- Deployment guidance:
+  - `docs/zendesk-cli-deployment-guidelines.md`
 
-## Delta Regression (UI/Header Removal + Restricted Shipping Guard)
-
-Executed: 2026-03-03 (post-deploy of latest iframe)
-
-1. Top header removal
-- Action:
-  - Open deployed iframe and verify top title/subtitle block is absent.
-- Expected:
-  - No `Swanson Shopify Assistant` + subtitle block above module nav.
-- Result:
-  - PASS
-
-2. Module navigation still functional
-- Action:
-  - Click `Customer`, `Orders`, `Cart` in sequence.
-- Expected:
-  - Correct module content renders each time.
-- Result:
-  - PASS
-
-3. Order expand control icon-only
-- Action:
-  - Inspect orders rendering code and control output.
-- Expected:
-  - Expand/collapse uses icon toggle, not text label.
-- Result:
-  - PASS (`▸` / `▾` toggle in `order-expand-toggle`)
-
-4. Address preview styling for overflow/readability
-- Action:
-  - Inspect `#shipPreview` CSS.
-- Expected:
-  - Inherited font, wrapping, and vertical scroll for long addresses.
-- Result:
-  - PASS (`font-family: inherit`, `overflow-wrap: anywhere`, `max-height`, `overflow-y: auto`)
-
-5. Restricted shipping guard on create/update draft
-- Action:
-  - Inspect cart submit path for state conflict blocking logic.
-- Expected:
-  - Draft create/update stops with clear error when item restricted for selected state.
-- Result:
-  - PASS (`getRestrictedShippingConflictState()` guard and error throw before create/update)
-
-6. Hover contrast (white text on dark green)
-- Action:
-  - Inspect hover rules for nav/action buttons.
-- Expected:
-  - Hover state keeps white text on dark background.
-- Result:
-  - PASS (`.module-nav button:hover`, `.order-actions button:hover`, `.btn-compact:hover` set readable contrast)
-
-Limitations for this delta pass:
-- Live data mutation tests (customer search/draft write) were not re-run in standalone iframe because app settings are injected in Zendesk context; standalone showed `Missing API key. Check app configuration.` which is expected outside normal embedded context.
-
-## Audit Log Regression (Internal Note)
-
-1. Session identity entry
-- Action:
-  - Open app in Zendesk ticket sidebar and wait for initialization.
-- Expected:
-  - Audit session entry includes signed-in Zendesk user name and user ID.
-  - Timestamp is in Central Time (`America/Chicago`, CST/CDT).
-  - This is the only automatic internal-note audit write.
-
-2. Backend CRUD and workflow entries
-- Action:
-  - Run customer search, select customer, add/remove SKU, create/update draft, and execute order actions (reorder/refund/cancel where available).
-- Expected:
-  - Backend receives batched audit entries for each operation with clear event labels and identifiers (customer ID, order/draft IDs when present).
-  - Error paths (for example validation/restriction blocks) are included in audit entries.
-
-3. Flush behavior
-- Action:
-  - Trigger several events, then submit/save ticket.
-- Expected:
-  - Pending audit buffer flushes to backend `/audit_log` on ticket save.
-  - Entries remain deduplicated (no rapid-repeat spam).
-
-## Exhaustive Audit + Commerce Regression (2026-03-03, Chrome DevTools)
-
-Scope:
-- Live embedded app on `https://swansonhealthproducts.zendesk.com/agent/tickets/new/7`
-- App ID `1212333`
-- Agent: `Kevin Wolf (Zendesk ID: 43073653036691)`
-- Backend verification: API request/response + DynamoDB table `zendesk-shopify-assistant-audit-log`
-
-Executed flow:
-1. Customer module:
-- Clicked `Customer`
-- `Search` executed with prefilled email
-- `Select First Result`
-- `Next: Orders`
-
-2. Orders module:
-- Verified draft and order cards render with created/updated timestamps
-- Clicked first order expand toggle
-- Clicked `Reorder Items`
-- Clicked first draft `Open Draft`
-
-3. Cart module:
-- Verified promo discount display format includes strike-through original price and discounted price
-- Entered promo code `CEO40sw`
-- Set shipping speed `Standard Shipping`
-- Toggled `Free Shipping`
-- Created draft order (observed `Draft order #D33626 created.`)
-- Searched SKU `SWA030` and verified `BOGO` badge on lookup result
-- Added SKU and verified cart row `Epic Pro 25-Strain Probiotic (BOGO)` with qty `2`
-- Updated draft order (observed `Draft order #D33626 updated.`)
-- Verified BOGO promo status text (`BOGO promo INT999 applied: -$26.89.`)
-
-Network/API evidence:
-- Successful audit flush observed:
-  - `POST .../prod/audit_log` status `200` (reqid `25812`)
-  - Response: `{"ok":true,"stored":6,"mode":"dynamodb","table":"zendesk-shopify-assistant-audit-log"}`
-- Request payload included expected recent event sequence:
-  - `sku_search`
-  - `sku_lookup_hit`
-  - `line_item_add`
-  - `draft_update_start`
-  - `promo_applied`
-  - `draft_update_success`
-
-DynamoDB evidence:
-- Queried `pk=TICKET#new_unsaved` in `us-east-1`
-- Confirmed persisted records for this run and actor:
-  - `customer_search`, `customer_select`, `address_load`, `orders_load`
-  - `draft_open`, `draft_open_success`
-  - `reorder_start`, `reorder_success`
-  - `promo_code_input`, `shipping_speed`, `shipping_free_toggle`
-  - `draft_create_start`, `promo_applied`, `draft_create_success`
-  - `sku_search`, `sku_lookup_hit`, `line_item_add`
-  - `draft_update_start`, `promo_applied`, `draft_update_success`
-
-Console sanity:
-- No blocking runtime errors attributed to `Swanson Shopify Assistant` during this run.
-- Existing warnings/errors were from Zendesk platform and other installed apps (not this app), consistent with prior runs.
-
-Restricted shipping validation status:
-- Guard logic remains present and unchanged in code path (`shipping_restriction_block` before draft submit).
-- A live restricted SKU/state combination was not available during this run, so the blocking path could not be triggered in production data.
