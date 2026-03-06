@@ -1,4 +1,4 @@
-const els = {
+﻿const els = {
   apiStatus: document.getElementById('apiStatus'),
   firstName: document.getElementById('firstName'),
   lastName: document.getElementById('lastName'),
@@ -1226,7 +1226,7 @@ function setUpsellExpanded(expanded) {
   if (!els.upsellPanel || !els.btnUpsellToggle) return;
   els.upsellPanel.style.display = upsellExpanded ? 'block' : 'none';
   els.btnUpsellToggle.setAttribute('aria-expanded', String(upsellExpanded));
-  if (els.upsellCaret) els.upsellCaret.textContent = upsellExpanded ? '▾' : '▸';
+  if (els.upsellCaret) els.upsellCaret.textContent = upsellExpanded ? 'â–¾' : 'â–¸';
 }
 
 function renderUpsellSuggestions() {
@@ -1461,19 +1461,19 @@ function summarizeShipmentUpdate(shipment) {
   if (latest) {
     const label = formatFulfillmentEventLabel(latest.status);
     const at = formatOrderDateTime(latest.happened_at);
-    return at ? `${label} • ${at}` : label;
+    return at ? `${label} â€¢ ${at}` : label;
   }
   if (shipment.delivered_at) {
     const at = formatOrderDateTime(shipment.delivered_at);
-    return at ? `Delivered • ${at}` : 'Delivered';
+    return at ? `Delivered â€¢ ${at}` : 'Delivered';
   }
   if (shipment.in_transit_at) {
     const at = formatOrderDateTime(shipment.in_transit_at);
-    return at ? `In Transit • ${at}` : 'In Transit';
+    return at ? `In Transit â€¢ ${at}` : 'In Transit';
   }
   if (shipment.estimated_delivery_at) {
     const at = formatOrderDateTime(shipment.estimated_delivery_at);
-    return at ? `Estimated Delivery • ${at}` : 'Estimated Delivery';
+    return at ? `Estimated Delivery â€¢ ${at}` : 'Estimated Delivery';
   }
   return '';
 }
@@ -1507,6 +1507,91 @@ function formatOrderDateTime(...values) {
   const raw = values.find((value) => String(value || '').trim());
   if (!raw) return '';
   return formatCentralDateTime(raw);
+}
+
+function formatRelativeOrderAge(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const target = new Date(raw);
+  if (Number.isNaN(target.getTime())) return '';
+  const deltaDays = Math.floor((Date.now() - target.getTime()) / (24 * 60 * 60 * 1000));
+  if (deltaDays <= 0) return 'Placed today';
+  if (deltaDays === 1) return 'Placed 1 day ago';
+  if (deltaDays < 14) return `Placed ${deltaDays} days ago`;
+  const deltaWeeks = Math.floor(deltaDays / 7);
+  if (deltaWeeks === 1) return 'Placed 1 week ago';
+  if (deltaWeeks < 9) return `Placed ${deltaWeeks} weeks ago`;
+  const deltaMonths = Math.floor(deltaDays / 30);
+  return deltaMonths <= 1 ? 'Placed 1 month ago' : `Placed ${deltaMonths} months ago`;
+}
+
+function getOrderIntelligence(order) {
+  const shipments = Array.isArray(order?.shipments) ? order.shipments : [];
+  const lineItems = Array.isArray(order?.line_items) ? order.line_items : [];
+  const shipmentCount = shipments.length;
+  const fulfilledCounts = lineItems.reduce((acc, item) => {
+    const qty = Number(item?.quantity || 0);
+    const fulfilled = Number(item?.fulfilled_quantity || 0);
+    acc.total += qty > 0 ? qty : 0;
+    acc.fulfilled += fulfilled > 0 ? Math.min(fulfilled, qty || fulfilled) : 0;
+    return acc;
+  }, { total: 0, fulfilled: 0 });
+  const financialRaw = String(order?.financial_status || '').trim().toUpperCase();
+  const fraudLevel = String(order?.fraud_analysis?.level || '').trim().toUpperCase();
+  const fraudRecommendation = String(order?.fraud_analysis?.recommendation || '').trim().toUpperCase();
+  const hasTracking = shipments.some((shipment) => Array.isArray(shipment?.tracking) && shipment.tracking.length);
+  const hasTrackingEvents = shipments.some((shipment) => Array.isArray(shipment?.events) && shipment.events.length);
+  const inTransitCount = shipments.filter((shipment) => {
+    const status = String(shipment?.display_status || shipment?.status || '').trim().toUpperCase();
+    return status.includes('IN_TRANSIT') || status.includes('IN TRANSIT');
+  }).length;
+  const deliveredCount = shipments.filter((shipment) => {
+    const status = String(shipment?.display_status || shipment?.status || '').trim().toUpperCase();
+    return status.includes('DELIVERED');
+  }).length;
+  const pills = [];
+
+  pills.push({
+    tone: shipmentCount > 1 ? 'accent' : 'neutral',
+    label: shipmentCount > 1 ? `${shipmentCount} shipments` : shipmentCount === 1 ? '1 shipment' : 'No shipments yet',
+  });
+
+  if (fulfilledCounts.total > 0) {
+    if (fulfilledCounts.fulfilled === 0) {
+      pills.push({ tone: 'warn', label: 'Awaiting fulfillment' });
+    } else if (fulfilledCounts.fulfilled < fulfilledCounts.total) {
+      pills.push({ tone: 'warn', label: `Partial fulfillment ${fulfilledCounts.fulfilled}/${fulfilledCounts.total}` });
+    } else {
+      pills.push({ tone: 'good', label: 'Fully fulfilled' });
+    }
+  }
+
+  if (inTransitCount > 0) {
+    pills.push({ tone: 'accent', label: `${inTransitCount} in transit` });
+  } else if (deliveredCount > 0) {
+    pills.push({ tone: 'good', label: deliveredCount > 1 ? `${deliveredCount} delivered` : 'Delivered' });
+  }
+
+  if (financialRaw.includes('REFUND')) {
+    pills.push({ tone: 'warn', label: 'Refund activity' });
+  } else if (financialRaw.includes('PENDING') || financialRaw.includes('AUTHORIZED')) {
+    pills.push({ tone: 'warn', label: 'Payment pending' });
+  } else if (financialRaw.includes('PAID')) {
+    pills.push({ tone: 'good', label: 'Payment captured' });
+  }
+
+  if (fraudRecommendation === 'INVESTIGATE' || fraudRecommendation === 'CANCEL' || fraudLevel === 'MEDIUM' || fraudLevel === 'HIGH') {
+    pills.push({ tone: 'danger', label: `Fraud ${formatFraudRecommendation(fraudRecommendation || fraudLevel)}` });
+  }
+
+  if (shipmentCount > 0 && hasTracking && !hasTrackingEvents) {
+    pills.push({ tone: 'neutral', label: 'Tracking posted, no events yet' });
+  }
+
+  const recency = formatRelativeOrderAge(order?.processed_at || order?.updated_at);
+  if (recency) pills.push({ tone: 'neutral', label: recency });
+
+  return pills.slice(0, 5);
 }
 
 function renderOrders(orders, draftOrders) {
@@ -1726,6 +1811,9 @@ function renderOrders(orders, draftOrders) {
     const fraudLevel = formatFraudLevel(fraud.level || '');
     const processed = formatOrderDateTime(order.processed_at, order.processedAt);
     const orderUpdated = formatOrderDateTime(order.updated_at, order.updatedAt);
+    const intelligencePills = getOrderIntelligence(order)
+      .map((pill) => `<span class="intelligence-pill intelligence-${pill.tone}">${pill.label}</span>`)
+      .join('');
     card.innerHTML = `
       <div class="order-header">
         <div>
@@ -1739,8 +1827,9 @@ function renderOrders(orders, draftOrders) {
             ${orderUpdated ? `<span class="pill">Updated: ${orderUpdated}</span>` : ''}
             ${order.legacy_id ? `<span class="pill">Order #: ${order.legacy_id}</span>` : ''}
           </div>
+          ${intelligencePills ? `<div class="order-intelligence">${intelligencePills}</div>` : ''}
         </div>
-        <button class="secondary order-expand-toggle" type="button" aria-label="Expand order details" aria-expanded="false" title="Expand order details">▸</button>
+        <button class="secondary order-expand-toggle" type="button" aria-label="Expand order details" aria-expanded="false" title="Expand order details">â–¸</button>
       </div>
       <div class="order-items" style="display:none;"></div>
       <div class="order-actions">
@@ -1868,7 +1957,7 @@ function renderOrders(orders, draftOrders) {
               if (eta) parts.push(`ETA ${eta}`);
               const line = document.createElement('div');
               line.className = 'shipment-event';
-              line.textContent = parts.join(' • ');
+              line.textContent = parts.join(' â€¢ ');
               eventWrap.appendChild(line);
             });
             toggle.addEventListener('click', () => {
@@ -2019,7 +2108,7 @@ function renderOrders(orders, draftOrders) {
     const setExpanded = (expanded) => {
       details.style.display = expanded ? 'block' : 'none';
       if (expandToggle) {
-        expandToggle.textContent = expanded ? '▾' : '▸';
+        expandToggle.textContent = expanded ? 'â–¾' : 'â–¸';
         expandToggle.setAttribute('aria-expanded', String(expanded));
         expandToggle.setAttribute('aria-label', expanded ? 'Collapse order details' : 'Expand order details');
         expandToggle.title = expanded ? 'Collapse order details' : 'Expand order details';
@@ -2036,7 +2125,7 @@ function renderOrders(orders, draftOrders) {
             otherDetails.style.display = 'none';
           }
           if (otherToggle) {
-            otherToggle.textContent = '▸';
+            otherToggle.textContent = 'â–¸';
             otherToggle.setAttribute('aria-expanded', 'false');
             otherToggle.setAttribute('aria-label', 'Expand order details');
             otherToggle.title = 'Expand order details';
@@ -3364,3 +3453,4 @@ setStatus(els.upsellStatus, 'Select a customer to load upsell ideas from prior o
 renderUpsellSuggestions();
 setActiveModule('customer');
 syncCustomerSelectionUi('');
+
