@@ -964,10 +964,23 @@ async function fetchCustomerOrders({ token, customerId }) {
               fulfillments(first: 10) {
                 id
                 status
+                displayStatus
+                inTransitAt
+                deliveredAt
+                estimatedDeliveryAt
+                updatedAt
                 trackingInfo {
                   number
                   url
                   company
+                }
+                events(first: 5, reverse: true, sortKey: HAPPENED_AT) {
+                  nodes {
+                    status
+                    message
+                    happenedAt
+                    estimatedDeliveryAt
+                  }
                 }
                 fulfillmentLineItems(first: 50) {
                   edges {
@@ -1045,11 +1058,22 @@ async function fetchCustomerOrders({ token, customerId }) {
       const shipments = (node.fulfillments || []).map((f) => ({
         id: f.id || "",
         status: f.status || null,
+        display_status: f.displayStatus || null,
+        in_transit_at: f.inTransitAt || null,
+        delivered_at: f.deliveredAt || null,
+        estimated_delivery_at: f.estimatedDeliveryAt || null,
+        updated_at: f.updatedAt || null,
         tracking: (f.trackingInfo || []).map((t) => ({
           number: t.number || "",
           url: t.url || "",
           company: t.company || "",
         })).filter((t) => t.number || t.url),
+        events: (f.events?.nodes || []).map((event) => ({
+          status: event?.status || null,
+          message: event?.message || "",
+          happened_at: event?.happenedAt || null,
+          estimated_delivery_at: event?.estimatedDeliveryAt || null,
+        })),
         line_items: ((f.fulfillmentLineItems?.edges) || []).map(({ node: li }) => ({
           line_item_id: li?.lineItem?.id || "",
           sku: li?.lineItem?.sku || "",

@@ -1258,6 +1258,43 @@ function formatShipmentState(value, fallbackFulfillment) {
   return formatFulfillmentLabel(fallbackFulfillment);
 }
 
+function formatFulfillmentEventLabel(value) {
+  const raw = String(value || '').trim().toUpperCase();
+  if (!raw) return 'Update';
+  if (raw === 'LABEL_PRINTED' || raw === 'LABEL_PURCHASED') return 'Label Created';
+  if (raw === 'CONFIRMED') return 'Confirmed';
+  if (raw === 'IN_TRANSIT') return 'In Transit';
+  if (raw === 'OUT_FOR_DELIVERY') return 'Out for Delivery';
+  if (raw === 'DELIVERED') return 'Delivered';
+  if (raw === 'FAILURE' || raw === 'ATTEMPTED_DELIVERY') return 'Delivery Issue';
+  if (raw === 'READY_FOR_PICKUP') return 'Ready for Pickup';
+  return formatStatusLabel(raw);
+}
+
+function summarizeShipmentUpdate(shipment) {
+  if (!shipment || typeof shipment !== 'object') return '';
+  const events = Array.isArray(shipment.events) ? shipment.events : [];
+  const latest = events.find((event) => event && (event.status || event.message || event.happened_at));
+  if (latest) {
+    const label = formatFulfillmentEventLabel(latest.status);
+    const at = formatOrderDateTime(latest.happened_at);
+    return at ? `${label} • ${at}` : label;
+  }
+  if (shipment.delivered_at) {
+    const at = formatOrderDateTime(shipment.delivered_at);
+    return at ? `Delivered • ${at}` : 'Delivered';
+  }
+  if (shipment.in_transit_at) {
+    const at = formatOrderDateTime(shipment.in_transit_at);
+    return at ? `In Transit • ${at}` : 'In Transit';
+  }
+  if (shipment.estimated_delivery_at) {
+    const at = formatOrderDateTime(shipment.estimated_delivery_at);
+    return at ? `Estimated Delivery • ${at}` : 'Estimated Delivery';
+  }
+  return '';
+}
+
 function formatFraudLevel(value) {
   const raw = String(value || '').trim().toUpperCase();
   if (!raw || raw === 'UNKNOWN') return 'Not Available';
@@ -1604,6 +1641,33 @@ function renderOrders(orders, draftOrders) {
             }
             shipmentCard.appendChild(row);
           });
+          const latestUpdate = summarizeShipmentUpdate(shipment);
+          if (latestUpdate) {
+            const update = document.createElement('div');
+            update.className = 'shipment-update';
+            update.textContent = `Latest update: ${latestUpdate}`;
+            shipmentCard.appendChild(update);
+          }
+          const shipmentEvents = Array.isArray(shipment.events) ? shipment.events : [];
+          if (shipmentEvents.length) {
+            const eventWrap = document.createElement('div');
+            eventWrap.className = 'shipment-event-list';
+            shipmentEvents.slice(0, 4).forEach((event) => {
+              const label = formatFulfillmentEventLabel(event.status);
+              const message = String(event.message || '').trim();
+              const happened = formatOrderDateTime(event.happened_at);
+              const eta = formatOrderDateTime(event.estimated_delivery_at);
+              const parts = [label];
+              if (happened) parts.push(happened);
+              if (message) parts.push(message);
+              if (eta) parts.push(`ETA ${eta}`);
+              const line = document.createElement('div');
+              line.className = 'shipment-event';
+              line.textContent = parts.join(' • ');
+              eventWrap.appendChild(line);
+            });
+            shipmentCard.appendChild(eventWrap);
+          }
         } else {
           const noTrack = document.createElement('div');
           noTrack.className = 'shipment-note';
@@ -1674,8 +1738,8 @@ function renderOrders(orders, draftOrders) {
     summaryRow.innerHTML = `
       <div class="detail-left">
         <div class="detail-text">
-          <span class="detail-main">Recommendation: ${fraudRecommendation}</span>
-          <span class="detail-meta">Risk level: ${fraudLevel}</span>
+          <span class="detail-main-wrap">Recommendation: ${fraudRecommendation}</span>
+          <span class="detail-meta-wrap">Risk level: ${fraudLevel}</span>
         </div>
       </div>
     `;
@@ -1687,8 +1751,8 @@ function renderOrders(orders, draftOrders) {
       unavailableRow.innerHTML = `
         <div class="detail-left">
           <div class="detail-text">
-            <span class="detail-main">Fraud analysis not available from Shopify for this order.</span>
-            <span class="detail-meta">${fraud.unavailable_reason ? `Reason: ${fraud.unavailable_reason}` : ''}</span>
+            <span class="detail-main-wrap">Fraud analysis not available from Shopify for this order.</span>
+            <span class="detail-meta-wrap">${fraud.unavailable_reason ? `Reason: ${fraud.unavailable_reason}` : ''}</span>
           </div>
         </div>
       `;
@@ -1700,7 +1764,7 @@ function renderOrders(orders, draftOrders) {
         reasonRow.innerHTML = `
           <div class="detail-left">
             <div class="detail-text">
-              <span class="detail-main">${reason}</span>
+              <span class="detail-main-wrap">${reason}</span>
             </div>
           </div>
         `;
@@ -1712,7 +1776,7 @@ function renderOrders(orders, draftOrders) {
       emptyRow.innerHTML = `
         <div class="detail-left">
           <div class="detail-text">
-            <span class="detail-main">No fraud signals returned by Shopify.</span>
+            <span class="detail-main-wrap">No fraud signals returned by Shopify.</span>
           </div>
         </div>
       `;
@@ -1729,8 +1793,8 @@ function renderOrders(orders, draftOrders) {
         signalRow.innerHTML = `
           <div class="detail-left">
             <div class="detail-text">
-              <span class="detail-main">${source}: ${signalRecommendation}</span>
-              <span class="detail-meta">${signalScore}${signal.message ? ` - ${signal.message}` : ''}</span>
+              <span class="detail-main-wrap">${source}: ${signalRecommendation}</span>
+              <span class="detail-meta-wrap">${signalScore}${signal.message ? ` - ${signal.message}` : ''}</span>
             </div>
           </div>
         `;
