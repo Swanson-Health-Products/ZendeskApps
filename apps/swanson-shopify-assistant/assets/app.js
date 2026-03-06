@@ -1461,19 +1461,19 @@ function summarizeShipmentUpdate(shipment) {
   if (latest) {
     const label = formatFulfillmentEventLabel(latest.status);
     const at = formatOrderDateTime(latest.happened_at);
-    return at ? `${label} â€¢ ${at}` : label;
+    return at ? `${label} \u2022 ${at}` : label;
   }
   if (shipment.delivered_at) {
     const at = formatOrderDateTime(shipment.delivered_at);
-    return at ? `Delivered â€¢ ${at}` : 'Delivered';
+    return at ? `Delivered \u2022 ${at}` : 'Delivered';
   }
   if (shipment.in_transit_at) {
     const at = formatOrderDateTime(shipment.in_transit_at);
-    return at ? `In Transit â€¢ ${at}` : 'In Transit';
+    return at ? `In Transit \u2022 ${at}` : 'In Transit';
   }
   if (shipment.estimated_delivery_at) {
     const at = formatOrderDateTime(shipment.estimated_delivery_at);
-    return at ? `Estimated Delivery â€¢ ${at}` : 'Estimated Delivery';
+    return at ? `Estimated Delivery \u2022 ${at}` : 'Estimated Delivery';
   }
   return '';
 }
@@ -1957,7 +1957,7 @@ function renderOrders(orders, draftOrders) {
               if (eta) parts.push(`ETA ${eta}`);
               const line = document.createElement('div');
               line.className = 'shipment-event';
-              line.textContent = parts.join(' â€¢ ');
+              line.textContent = parts.join(' \u2022 ');
               eventWrap.appendChild(line);
             });
             toggle.addEventListener('click', () => {
