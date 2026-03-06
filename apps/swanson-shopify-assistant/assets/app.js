@@ -779,8 +779,10 @@ function applyAddressValidationState(draftOrder) {
 }
 
 function renderSkuCard(variant) {
+  if (!els.skuCard) return;
   if (!variant) {
     els.skuCard.innerHTML = '';
+    els.skuCard.style.display = 'none';
     return;
   }
   const img = variant.image_url ? `<img src="${variant.image_url}" alt="${variant.image_alt || ''}">` : '<div class="pill">No image</div>';
@@ -788,6 +790,7 @@ function renderSkuCard(variant) {
   const inventoryBadge = getInventoryBadge(variant.inventory_quantity);
   const restricted = parseRestrictedStates(variant.restricted_states || '');
   const restrictedLabel = restricted.length ? `<span class="pill">Restricted: ${restricted.join(', ')}</span>` : '';
+  els.skuCard.style.display = '';
   els.skuCard.innerHTML = `
     <div class="sku-card">
       ${img}
